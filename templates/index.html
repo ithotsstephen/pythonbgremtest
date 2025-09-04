@@ -35,6 +35,12 @@
             <h2>Processed</h2>
             {% if preview_img %}
             <img src="{{ preview_img }}" alt="Processed Image" id="processedImg">
+                <div id="processedWrapper" style="position:relative; display:inline-block;">
+                    <!-- Draggable overlay text element inserted dynamically -->
+                </div>
+            <div id="textDragLayer" style="position:relative;">
+                <!-- dynamic draggable text preview inserted here -->
+            </div>
             <div id="adjustControls" style="margin-top:15px; background:#f5f5f5; padding:12px 14px; border:1px solid #ddd; border-radius:6px;">
                 <div style="display:flex; gap:14px; flex-wrap:wrap;">
                     <label style="flex:1; min-width:160px;">Brightness
@@ -76,8 +82,9 @@
                     <hr style="width:100%; border:none; border-top:1px solid #ddd; margin:4px 0;">
                     <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
                         <div style="flex:2; min-width:180px;">
-                            <label style="font-size:12px; display:block;">Text Overlay</label>
-                            <input type="text" id="overlayText" placeholder="Enter text" style="width:100%; padding:4px 6px;">
+                            <label style="font-size:12px; display:block;">Text Overlay (multi-line)</label>
+                            <textarea id="overlayText" placeholder="Enter description" rows="3" style="width:100%; padding:4px 6px; resize:horizontal; line-height:1.25; font-family:inherit;"></textarea>
+                            <small style="font-size:11px; color:#555; display:block; margin-top:2px;">Resize width then drag text on image. Editing text resets position.</small>
                         </div>
                         <div style="flex:1; min-width:90px;">
                             <label style="font-size:12px; display:block;">Size</label>
@@ -111,6 +118,10 @@
                             <label style="font-size:12px; display:block;">Rotate (deg)</label>
                             <input type="range" id="rotateRange" min="0" max="360" step="1" value="0" style="width:100%;">
                         </div>
+                                            <div style="flex:1; min-width:160px;">
+                                                <label style="font-size:12px; display:block;">Text Rotate</label>
+                                                <input type="range" id="textRotateRange" min="0" max="360" step="1" value="0" style="width:100%;">
+                                            </div>
                         <div style="display:flex; gap:6px; align-items:center;">
                             <label style="font-size:12px;">Flip:</label>
                             <button type="button" id="flipH" style="padding:4px 6px;">H</button>
@@ -150,6 +161,13 @@ const bgUploadStatus = document.getElementById('bgUploadStatus');
 const removeBgImageBtn = document.getElementById('removeBgImage');
 let currentBgColor = '';
 let currentBgImage = '';
+// Drag text state
+let dragTextEl = null;
+let dragging = false;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+let textAbsX = null; // absolute pixel positions stored
+let textAbsY = null;
 // Text & transform controls
 const overlayText = document.getElementById('overlayText');
 const textSize = document.getElementById('textSize');
@@ -163,13 +181,19 @@ const flipV = document.getElementById('flipV');
 const flipReset = document.getElementById('flipReset');
 let flipStateH = false;
 let flipStateV = false;
+// Track current text box pixel width (in image space approximate)
+let textBoxClientWidth = null; // client CSS pixels of textarea
+let lastSentTextBoxWidth = null;
+let overlayBoxWidthPx = null; // width of dragged overlay in image pixels
+const textRotateRange = document.getElementById('textRotateRange');
 
 async function fetchAdjusted(){
     if(!processedImgEl || !resultFileName) return;
     const b = brightnessRange.value;
     const s = sharpnessRange.value;
     adjustStatus.textContent = 'Applying…';
-    const baseEndpoint = (currentBgColor || currentBgImage || (overlayText && overlayText.value.trim()) || (rotateRange && rotateRange.value !== '0') || (flipStateH || flipStateV)) ? '/render' : '/adjust';
+    const needRender = currentBgColor || currentBgImage || (overlayText && overlayText.value.trim()) || (rotateRange && rotateRange.value !== '0') || (flipStateH || flipStateV);
+    const baseEndpoint = needRender ? '/render' : '/adjust';
     let url = `${baseEndpoint}?file=${encodeURIComponent(resultFileName)}&brightness=${b}&sharpness=${s}`;
     if(currentBgColor){
         url += `&color=${encodeURIComponent(currentBgColor.replace('#',''))}`;
@@ -178,15 +202,28 @@ async function fetchAdjusted(){
         url += `&bg_image=${encodeURIComponent(currentBgImage)}`;
     }
     if(overlayText && overlayText.value.trim()){
-        url += `&text=${encodeURIComponent(overlayText.value.trim())}`;
+        url += `&text=${encodeURIComponent(overlayText.value)}`;
         url += `&text_size=${encodeURIComponent(textSize.value || '48')}`;
         url += `&text_color=${encodeURIComponent(textColor.value.replace('#',''))}`;
         url += `&text_pos=${encodeURIComponent(textPos.value)}`;
         if(textBold.checked) url += `&text_bold=1`;
+        const wToSend = overlayBoxWidthPx || textBoxClientWidth;
+        if(wToSend){
+            url += `&text_box_w=${encodeURIComponent(wToSend)}`;
+        }
+        if(textAbsX !== null && textAbsY !== null){
+            url += `&text_x=${textAbsX}&text_y=${textAbsY}`;
+        }
+        if(textRotateRange && textRotateRange.value !== '0'){
+            url += `&text_rotate=${encodeURIComponent(textRotateRange.value)}`;
+        }
     }
     if(rotateRange && rotateRange.value !== '0'){
         url += `&rotate=${encodeURIComponent(rotateRange.value)}`;
     }
+        if(textRotateRange && textRotateRange.value !== '0' && !(overlayText && overlayText.value.trim())){
+            // if user rotates text but no text, ignore
+        }
     let flipParam = '';
     if(flipStateH) flipParam += 'h';
     if(flipStateV) flipParam += 'v';
@@ -294,11 +331,21 @@ if (downloadProcessed && processedImgEl){
             url += `&bg_image=${encodeURIComponent(currentBgImage)}`;
         }
         if(overlayText && overlayText.value.trim()){
-            url += `&text=${encodeURIComponent(overlayText.value.trim())}`;
+            url += `&text=${encodeURIComponent(overlayText.value)}`;
             url += `&text_size=${encodeURIComponent(textSize.value || '48')}`;
             url += `&text_color=${encodeURIComponent(textColor.value.replace('#',''))}`;
             url += `&text_pos=${encodeURIComponent(textPos.value)}`;
             if(textBold.checked) url += `&text_bold=1`;
+            const wToSend = overlayBoxWidthPx || textBoxClientWidth;
+            if(wToSend){
+                url += `&text_box_w=${encodeURIComponent(wToSend)}`;
+            }
+            if(textAbsX !== null && textAbsY !== null){
+                url += `&text_x=${textAbsX}&text_y=${textAbsY}`;
+            }
+            if(textRotateRange && textRotateRange.value !== '0'){
+                url += `&text_rotate=${encodeURIComponent(textRotateRange.value)}`;
+            }
         }
         if(rotateRange && rotateRange.value !== '0'){
             url += `&rotate=${encodeURIComponent(rotateRange.value)}`;
@@ -362,8 +409,153 @@ if(clearBgBtn){
         if(textBold) textBold.checked=false;
         if(rotateRange){ rotateRange.value=0; rotateValue.textContent='0°'; }
         flipStateH=false; flipStateV=false;
+    textAbsX = textAbsY = null;
+    removeDragText();
         fetchAdjusted();
     });
+}
+function ensureDragText(){
+    if(!overlayText || !overlayText.value.trim()) { removeDragText(); return; }
+    if(!dragTextEl){
+        dragTextEl = document.createElement('div');
+        dragTextEl.id = 'dragOverlayText';
+        dragTextEl.style.position = 'absolute';
+        dragTextEl.style.left = '50%';
+        dragTextEl.style.top = '90%';
+        dragTextEl.style.transform = 'translate(-50%, -50%)';
+        dragTextEl.style.cursor = 'move';
+        dragTextEl.style.userSelect = 'none';
+        dragTextEl.style.padding = '2px 4px';
+        dragTextEl.style.background = 'rgba(255,255,255,0.2)';
+        dragTextEl.style.border = '1px dashed #555';
+        dragTextEl.style.fontFamily = 'sans-serif';
+        dragTextEl.style.fontWeight = textBold.checked ? '700':'400';
+        dragTextEl.style.fontSize = (textSize.value||48)+ 'px';
+        dragTextEl.style.color = textColor.value;
+        const containerParent = processedImgEl.parentElement;
+        containerParent.style.position='relative';
+        containerParent.appendChild(dragTextEl);
+    }
+    dragTextEl.textContent = overlayText.value; // preserve newlines
+    dragTextEl.style.fontWeight = textBold.checked ? '700':'400';
+    dragTextEl.style.fontSize = (textSize.value||48)+ 'px';
+    dragTextEl.style.color = textColor.value;
+    dragTextEl.style.whiteSpace = 'pre-wrap';
+    dragTextEl.style.maxWidth = processedImgEl ? processedImgEl.clientWidth + 'px' : '100%';
+}
+
+function removeDragText(){
+    if(dragTextEl){
+        dragTextEl.remove();
+        dragTextEl = null;
+    }
+}
+
+function imagePixelFromClient(clientX, clientY){
+    const rect = processedImgEl.getBoundingClientRect();
+    const scaleX = processedImgEl.naturalWidth / rect.width;
+    const scaleY = processedImgEl.naturalHeight / rect.height;
+    const x = (clientX - rect.left) * scaleX;
+    const y = (clientY - rect.top) * scaleY;
+    return {x: Math.round(x), y: Math.round(y)};
+}
+
+function startDrag(e){
+    if(!dragTextEl) return;
+    dragging = true;
+    const rect = dragTextEl.getBoundingClientRect();
+    dragOffsetX = e.clientX - rect.left;
+    dragOffsetY = e.clientY - rect.top;
+    document.addEventListener('mousemove', onDragMove);
+    document.addEventListener('mouseup', endDrag);
+    e.preventDefault();
+}
+function onDragMove(e){
+    if(!dragging || !dragTextEl) return;
+    const parentRect = processedImgEl.getBoundingClientRect();
+    let left = e.clientX - dragOffsetX - parentRect.left;
+    let top = e.clientY - dragOffsetY - parentRect.top;
+    // constrain within image box
+    left = Math.max(0, Math.min(parentRect.width - dragTextEl.offsetWidth, left));
+    top = Math.max(0, Math.min(parentRect.height - dragTextEl.offsetHeight, top));
+    dragTextEl.style.left = left + 'px';
+    dragTextEl.style.top = top + 'px';
+    dragTextEl.style.transform = 'translate(0,0)';
+}
+function endDrag(e){
+    if(!dragging) return;
+    dragging = false;
+    document.removeEventListener('mousemove', onDragMove);
+    document.removeEventListener('mouseup', endDrag);
+    if(dragTextEl){
+    const rect = dragTextEl.getBoundingClientRect();
+    const imgRect = processedImgEl.getBoundingClientRect();
+    const scaleX = processedImgEl.naturalWidth / imgRect.width;
+    const scaleY = processedImgEl.naturalHeight / imgRect.height;
+    const left = rect.left - imgRect.left;
+    const top = rect.top - imgRect.top;
+    textAbsX = Math.round(left * scaleX);
+    textAbsY = Math.round(top * scaleY);
+    const padAdjust = 8; // 2px 4px padding
+    overlayBoxWidthPx = Math.max(10, Math.round((rect.width - padAdjust) * scaleX));
+    fetchAdjusted();
+    }
+}
+
+// Event bindings for drag
+document.addEventListener('mousedown', (e)=>{
+    if(e.target === dragTextEl){
+        startDrag(e);
+    }
+});
+
+// Update drag overlay on text-related input changes
+[overlayText, textSize, textColor, textBold].forEach(el => {
+    if(!el) return;
+    el.addEventListener('input', () => { 
+        // Reset absolute placement if text characteristics changed
+        textAbsX = textAbsY = null; 
+        ensureDragText(); 
+        fetchAdjusted(); 
+    });
+    el.addEventListener('change', () => { 
+        textAbsX = textAbsY = null; 
+        ensureDragText(); 
+        fetchAdjusted(); 
+    });
+});
+if(textPos){
+    textPos.addEventListener('change', () => { 
+        // Changing preset resets manual coordinates
+        textAbsX = textAbsY = null; 
+        ensureDragText(); 
+        fetchAdjusted(); 
+    });
+}
+if(textRotateRange){
+    textRotateRange.addEventListener('input', () => { fetchAdjusted(); });
+}
+
+// Initialize existing text if any after load
+window.addEventListener('load', ()=>{ ensureDragText(); });
+
+// Observe textarea width changes (manual resize) to re-render when baked next time
+if(overlayText){
+    const resizeObserver = new ResizeObserver(entries => {
+        for(const entry of entries){
+            const w = Math.round(entry.contentRect.width);
+            if(w !== textBoxClientWidth){
+                textBoxClientWidth = w;
+                // If text already baked (coords set) trigger re-render to apply wrapping.
+                if(textAbsX !== null && textAbsY !== null){
+                    fetchAdjusted();
+                }
+            }
+        }
+    });
+    resizeObserver.observe(overlayText);
+    // Initial width capture
+    textBoxClientWidth = Math.round(overlayText.getBoundingClientRect().width);
 }
 
 // Upload custom background image
@@ -399,16 +591,6 @@ if(removeBgImageBtn){
         fetchAdjusted();
     });
 }
-
-// Text & transform listeners
-const textInputs = [overlayText, textSize, textColor, textPos, textBold];
-textInputs.forEach(el => {
-    if(!el) return;
-    const evt = (el.type === 'text' || el.tagName === 'SELECT' || el.type === 'number') ? 'input' : 'change';
-    el.addEventListener(evt, () => {
-        fetchAdjusted();
-    });
-});
 
 if(rotateRange){
     rotateRange.addEventListener('input', () => {

@@ -106,6 +106,11 @@ def render_image():
     text_font = request.args.get('text_font', '')
     text_bold = request.args.get('text_bold', '0') == '1'
     text_pos = request.args.get('text_pos', 'bc')
+    text_rotate = request.args.get('text_rotate', '0')  # rotation of text block only
+    # absolute position overrides (pixels from top-left)
+    text_x_arg = request.args.get('text_x')
+    text_y_arg = request.args.get('text_y')
+    text_box_w_arg = request.args.get('text_box_w')  # width constraint for wrapping
     rotate = request.args.get('rotate', '0')
     flip = request.args.get('flip', '')
     try:
@@ -150,7 +155,7 @@ def render_image():
                 base = PILImage.new('RGBA', (W,H), (r,g,bcol,255))
             base.alpha_composite(img)
             composed = base
-        # text overlay
+    # text overlay
         if text:
             draw = ImageDraw.Draw(composed)
             tc = text_color_hex.lstrip('#')
@@ -179,20 +184,114 @@ def render_image():
                     font_obj = ImageFont.truetype("DejaVuSans.ttf", size_int)
                 except Exception:
                     font_obj = ImageFont.load_default()
-            text_bbox = draw.textbbox((0,0), text, font=font_obj)
-            tw = text_bbox[2]-text_bbox[0]
-            th = text_bbox[3]-text_bbox[1]
+            # wrapping logic if box width provided or newlines
             W,H = composed.size
+            max_wrap_w = None
+            if text_box_w_arg:
+                try:
+                    max_wrap_w = int(float(text_box_w_arg))
+                    if max_wrap_w < 20:
+                        max_wrap_w = 20
+                    if max_wrap_w > W:
+                        max_wrap_w = W
+                except ValueError:
+                    max_wrap_w = None
+
+            def wrap_lines(raw_text):
+                if not max_wrap_w:
+                    return raw_text.split('\n')
+                lines = []
+                for para in raw_text.split('\n'):
+                    words = para.split(' ')
+                    current = ''
+                    for w in words:
+                        candidate = w if current == '' else current + ' ' + w
+                        bb = draw.textbbox((0,0), candidate, font=font_obj)
+                        width_c = bb[2]-bb[0]
+                        if width_c <= max_wrap_w:
+                            current = candidate
+                        else:
+                            if current:
+                                lines.append(current)
+                            # word longer than box: hard break
+                            bbw = draw.textbbox((0,0), w, font=font_obj)[2]
+                            if bbw <= max_wrap_w:
+                                current = w
+                            else:
+                                # break w into chars
+                                acc = ''
+                                for ch in w:
+                                    test = acc + ch
+                                    bb2 = draw.textbbox((0,0), test, font=font_obj)
+                                    if (bb2[2]-bb2[0]) <= max_wrap_w:
+                                        acc = test
+                                    else:
+                                        if acc:
+                                            lines.append(acc)
+                                        acc = ch
+                                current = acc
+                    if current:
+                        lines.append(current)
+                return lines
+
+            lines = wrap_lines(text)
+            # measure total block
+            line_metrics = [draw.textbbox((0,0), ln, font=font_obj) for ln in lines]
+            line_heights = [m[3]-m[1] for m in line_metrics]
+            tw = max((m[2]-m[0]) for m in line_metrics) if line_metrics else 0
+            th = sum(line_heights)
             margin = 10
             pos_map = {
                 'tl': (margin, margin), 'tc': ((W-tw)//2, margin), 'tr': (W - tw - margin, margin),
                 'cl': (margin, (H-th)//2), 'cc': ((W-tw)//2, (H-th)//2), 'cr': (W - tw - margin, (H-th)//2),
                 'bl': (margin, H - th - margin), 'bc': ((W-tw)//2, H - th - margin), 'br': (W - tw - margin, H - th - margin)
             }
-            tx, ty = pos_map.get(text_pos, pos_map['bc'])
-            offsets = [(0,0),(1,0),(0,1),(1,1)] if text_bold else [(0,0)]
-            for ox, oy in offsets:
-                draw.text((tx+ox, ty+oy), text, font=font_obj, fill=(tr,tg,tb,255))
+            # Determine coordinates
+            use_abs = False
+            tx = ty = 0
+            if text_x_arg is not None and text_y_arg is not None:
+                try:
+                    tx = int(float(text_x_arg))
+                    ty = int(float(text_y_arg))
+                    use_abs = True
+                except ValueError:
+                    use_abs = False
+            if not use_abs:
+                tx, ty = pos_map.get(text_pos, pos_map['bc'])
+            # Clamp to canvas so text stays fully visible
+            tx = max(0, min(W - tw, tx))
+            ty = max(0, min(H - th, ty))
+            # Draw text either directly or on temp layer for rotation
+            try:
+                t_rotate = float(text_rotate)
+            except ValueError:
+                t_rotate = 0.0
+            if t_rotate % 360 != 0:
+                # render to separate transparent image then rotate and paste centered on original intended block
+                from PIL import Image as PILImage
+                temp = PILImage.new('RGBA', (tw, th), (0,0,0,0))
+                tdraw = ImageDraw.Draw(temp)
+                offsets = [(0,0),(1,0),(0,1),(1,1)] if text_bold else [(0,0)]
+                cy_local = 0
+                for idx, ln in enumerate(lines):
+                    lh = line_heights[idx]
+                    for ox, oy in offsets:
+                        tdraw.text((ox, cy_local+oy), ln, font=font_obj, fill=(tr,tg,tb,255))
+                    cy_local += lh
+                rotated = temp.rotate(-t_rotate, expand=True, resample=Image.BICUBIC)
+                # compute new top-left so center remains (tx,ty) block area center
+                cx = tx + tw/2
+                cy_center = ty + th/2
+                new_left = int(cx - rotated.width/2)
+                new_top = int(cy_center - rotated.height/2)
+                composed.alpha_composite(rotated, (new_left, new_top))
+            else:
+                offsets = [(0,0),(1,0),(0,1),(1,1)] if text_bold else [(0,0)]
+                for ox, oy in offsets:
+                    cy = ty
+                    for idx, ln in enumerate(lines):
+                        draw.text((tx+ox, cy+oy), ln, font=font_obj, fill=(tr,tg,tb,255))
+                        cy += line_heights[idx]
         # flips
         if flip:
             if 'h' in flip:
