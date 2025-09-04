@@ -4,6 +4,8 @@ from flask import Flask, request, render_template, send_file, url_for, jsonify
 from werkzeug.utils import secure_filename
 from rembg import remove
 from PIL import Image, ImageFont, ImageDraw
+from zipfile import ZipFile
+import math
 
 UPLOAD_FOLDER = 'uploads'
 RESULT_FOLDER = 'results'
@@ -309,6 +311,264 @@ def render_image():
         composed.save(bio, format='PNG')
         bio.seek(0)
         return send_file(bio, mimetype='image/png')
+    except Exception as e:
+        return f'error {e}', 500
+
+@app.route('/multi_resize')
+def multi_resize():
+    """Generate multiple social-media sized variants (maintain aspect ratio, pad transparent) and return a zip."""
+    from PIL import ImageEnhance
+    fname = request.args.get('file')
+    if not fname or '/' in fname or '..' in fname:
+        return 'bad file', 400
+    base_path = os.path.join(RESULT_FOLDER, fname)
+    if not os.path.exists(base_path):
+        return 'not found', 404
+    # parse common params (duplicated from render_image for simplicity)
+    try:
+        b = float(request.args.get('brightness', '1'))
+        s = float(request.args.get('sharpness', '1'))
+    except ValueError:
+        return 'bad params', 400
+    color_hex = request.args.get('color')
+    bg_image_name = request.args.get('bg_image')
+    text = request.args.get('text', '').strip()
+    text_color_hex = request.args.get('text_color', '000000')
+    text_size = request.args.get('text_size', '48')
+    text_font = request.args.get('text_font', '')
+    text_bold = request.args.get('text_bold', '0') == '1'
+    text_pos = request.args.get('text_pos', 'bc')
+    text_rotate = request.args.get('text_rotate', '0')
+    text_x_arg = request.args.get('text_x')
+    text_y_arg = request.args.get('text_y')
+    text_box_w_arg = request.args.get('text_box_w')
+    rotate = request.args.get('rotate', '0')
+    flip = request.args.get('flip', '')
+    sizes_param = request.args.get('sizes', '')
+    mode = request.args.get('mode', 'fit')  # fit or cover
+    pad_hex = request.args.get('pad')  # optional hex for padding
+    if not sizes_param:
+        return 'no sizes', 400
+    requested_sizes = [sname.strip() for sname in sizes_param.split(',') if sname.strip()]
+    size_map = {
+        'ig_square': (1080,1080,'ig_square'),
+        'ig_portrait': (1080,1350,'ig_portrait'),
+        'ig_landscape': (1080,566,'ig_landscape'),
+        'fb_post': (1200,630,'fb_post'),
+        'li_post': (1200,627,'li_post'),
+        'x_post': (1600,900,'x_post'),
+    }
+    valid_specs = [size_map[k] for k in requested_sizes if k in size_map]
+    if not valid_specs:
+        return 'no valid sizes', 400
+    try:
+        # Reuse render logic to build composed image first
+        img = Image.open(base_path).convert('RGBA')
+        if b != 1:
+            from PIL import ImageEnhance
+            img = ImageEnhance.Brightness(img).enhance(b)
+        if s != 1:
+            img = ImageEnhance.Sharpness(img).enhance(s)
+        composed = img
+        # background composition
+        if color_hex or bg_image_name:
+            W, H = img.size
+            if bg_image_name:
+                if '/' in bg_image_name or '..' in bg_image_name:
+                    return 'bad bg name', 400
+                bg_path = os.path.join(BACKGROUND_FOLDER, bg_image_name)
+                if not os.path.exists(bg_path):
+                    return 'bg not found', 404
+                bg_img = Image.open(bg_path).convert('RGBA')
+                bw, bh = bg_img.size
+                scale = max(W / bw, H / bh)
+                new_size = (int(bw * scale), int(bh * scale))
+                bg_img = bg_img.resize(new_size, Image.LANCZOS)
+                left = (bg_img.width - W) // 2
+                top = (bg_img.height - H) // 2
+                bg_img = bg_img.crop((left, top, left + W, top + H))
+                base_img = bg_img
+            else:
+                color_hex_clean = color_hex.lstrip('#') if color_hex else ''
+                if len(color_hex_clean) == 3:
+                    color_hex_clean = ''.join(c*2 for c in color_hex_clean)
+                try:
+                    r = int(color_hex_clean[0:2],16)
+                    g = int(color_hex_clean[2:4],16)
+                    bcol = int(color_hex_clean[4:6],16)
+                except Exception:
+                    r,g,bcol = 255,255,255
+                base_img = Image.new('RGBA', img.size, (r,g,bcol,255))
+            base_img.alpha_composite(img)
+            composed = base_img
+        # text (reuse from render_image simplified: copy-paste block for consistency)
+        if text:
+            draw = ImageDraw.Draw(composed)
+            tc = text_color_hex.lstrip('#')
+            if len(tc) == 3:
+                tc = ''.join(c*2 for c in tc)
+            if len(tc) != 6:
+                tc = '000000'
+            try:
+                tr = int(tc[0:2],16); tg = int(tc[2:4],16); tb = int(tc[4:6],16)
+            except ValueError:
+                tr,tg,tb = 0,0,0
+            try:
+                size_int = max(8, min(400, int(text_size)))
+            except ValueError:
+                size_int = 48
+            font_obj = None
+            if text_font:
+                font_path = os.path.join('fonts', os.path.basename(text_font))
+                if os.path.exists(font_path):
+                    try:
+                        font_obj = ImageFont.truetype(font_path, size_int)
+                    except Exception:
+                        font_obj = None
+            if font_obj is None:
+                try:
+                    font_obj = ImageFont.truetype("DejaVuSans.ttf", size_int)
+                except Exception:
+                    font_obj = ImageFont.load_default()
+            W,H = composed.size
+            max_wrap_w = None
+            if text_box_w_arg:
+                try:
+                    max_wrap_w = int(float(text_box_w_arg))
+                    if max_wrap_w < 20: max_wrap_w = 20
+                    if max_wrap_w > W: max_wrap_w = W
+                except ValueError:
+                    max_wrap_w = None
+            def wrap_lines(raw_text):
+                if not max_wrap_w:
+                    return raw_text.split('\n')
+                lines = []
+                for para in raw_text.split('\n'):
+                    words = para.split(' ')
+                    current = ''
+                    for w in words:
+                        candidate = w if current == '' else current + ' ' + w
+                        bb = draw.textbbox((0,0), candidate, font=font_obj)
+                        if (bb[2]-bb[0]) <= max_wrap_w:
+                            current = candidate
+                        else:
+                            if current:
+                                lines.append(current)
+                            bbw = draw.textbbox((0,0), w, font=font_obj)[2]
+                            if bbw <= max_wrap_w:
+                                current = w
+                            else:
+                                acc = ''
+                                for ch in w:
+                                    test = acc + ch
+                                    bb2 = draw.textbbox((0,0), test, font=font_obj)
+                                    if (bb2[2]-bb2[0]) <= max_wrap_w:
+                                        acc = test
+                                    else:
+                                        if acc:
+                                            lines.append(acc)
+                                        acc = ch
+                                current = acc
+                    if current:
+                        lines.append(current)
+                return lines
+            lines = wrap_lines(text)
+            line_metrics = [draw.textbbox((0,0), ln, font=font_obj) for ln in lines]
+            line_heights = [m[3]-m[1] for m in line_metrics]
+            tw = max((m[2]-m[0]) for m in line_metrics) if line_metrics else 0
+            th = sum(line_heights)
+            margin = 10
+            pos_map = {
+                'tl': (margin, margin), 'tc': ((W-tw)//2, margin), 'tr': (W - tw - margin, margin),
+                'cl': (margin, (H-th)//2), 'cc': ((W-tw)//2, (H-th)//2), 'cr': (W - tw - margin, (H-th)//2),
+                'bl': (margin, H - th - margin), 'bc': ((W-tw)//2, H - th - margin), 'br': (W - tw - margin, H - th - margin)
+            }
+            use_abs = False
+            tx = ty = 0
+            if text_x_arg is not None and text_y_arg is not None:
+                try:
+                    tx = int(float(text_x_arg)); ty = int(float(text_y_arg)); use_abs = True
+                except ValueError:
+                    use_abs = False
+            if not use_abs:
+                tx, ty = pos_map.get(text_pos, pos_map['bc'])
+            tx = max(0, min(W - tw, tx))
+            ty = max(0, min(H - th, ty))
+            try:
+                t_rotate = float(text_rotate)
+            except ValueError:
+                t_rotate = 0.0
+            offsets_base = [(0,0),(1,0),(0,1),(1,1)] if text_bold else [(0,0)]
+            if t_rotate % 360 != 0:
+                temp = Image.new('RGBA', (tw, th), (0,0,0,0))
+                tdraw = ImageDraw.Draw(temp)
+                cy_local = 0
+                for idx, ln in enumerate(lines):
+                    lh = line_heights[idx]
+                    for ox, oy in offsets_base:
+                        tdraw.text((ox, cy_local+oy), ln, font=font_obj, fill=(tr,tg,tb,255))
+                    cy_local += lh
+                rotated = temp.rotate(-t_rotate, expand=True, resample=Image.BICUBIC)
+                cx = tx + tw/2; cyc = ty + th/2
+                new_left = int(cx - rotated.width/2); new_top = int(cyc - rotated.height/2)
+                composed.alpha_composite(rotated, (new_left, new_top))
+            else:
+                for ox, oy in offsets_base:
+                    cy_draw = ty
+                    for idx, ln in enumerate(lines):
+                        draw.text((tx+ox, cy_draw+oy), ln, font=font_obj, fill=(tr,tg,tb,255))
+                        cy_draw += line_heights[idx]
+        # flips & rotation (global)
+        if flip:
+            if 'h' in flip:
+                composed = composed.transpose(Image.FLIP_LEFT_RIGHT)
+            if 'v' in flip:
+                composed = composed.transpose(Image.FLIP_TOP_BOTTOM)
+        try:
+            rdeg = float(rotate)
+        except ValueError:
+            rdeg = 0
+        if rdeg % 360 != 0:
+            composed = composed.rotate(-rdeg, expand=True, resample=Image.BICUBIC)
+        # build variants
+        baseW, baseH = composed.size
+        zip_buffer = io.BytesIO()
+        with ZipFile(zip_buffer, 'w') as zf:
+            for (tW, tH, tag) in valid_specs:
+                if mode == 'cover':
+                    scale = max(tW / baseW, tH / baseH)
+                else:  # fit
+                    scale = min(tW / baseW, tH / baseH)
+                new_size = (int(baseW * scale), int(baseH * scale))
+                resized = composed.resize(new_size, Image.LANCZOS)
+                if mode == 'cover':
+                    # center crop to target
+                    left = (new_size[0] - tW) // 2 if new_size[0] > tW else 0
+                    top = (new_size[1] - tH) // 2 if new_size[1] > tH else 0
+                    crop_box = (left, top, left + tW, top + tH)
+                    cropped = resized.crop(crop_box)
+                    canvas = cropped.copy()
+                else:
+                    if pad_hex and len(pad_hex) in (3,6):
+                        ph = pad_hex.lstrip('#')
+                        if len(ph) == 3: ph = ''.join(c*2 for c in ph)
+                        try:
+                            pr = int(ph[0:2],16); pg = int(ph[2:4],16); pb = int(ph[4:6],16)
+                        except Exception:
+                            pr,pg,pb = 0,0,0
+                        canvas = Image.new('RGBA', (tW, tH), (pr,pg,pb,255))
+                    else:
+                        canvas = Image.new('RGBA', (tW, tH), (0,0,0,0))
+                    off_x = (tW - new_size[0]) // 2
+                    off_y = (tH - new_size[1]) // 2
+                    canvas.alpha_composite(resized, (off_x, off_y))
+                out_bytes = io.BytesIO()
+                canvas.save(out_bytes, format='PNG')
+                out_bytes.seek(0)
+                base_name = os.path.splitext(os.path.basename(fname))[0]
+                zf.writestr(f"{base_name}_{tag}.png", out_bytes.read())
+        zip_buffer.seek(0)
+        return send_file(zip_buffer, mimetype='application/zip', download_name='resized_variants.zip', as_attachment=True)
     except Exception as e:
         return f'error {e}', 500
 

@@ -130,6 +130,39 @@
                         </div>
                         <span id="rotateValue" style="font-size:12px; color:#555;">0°</span>
                     </div>
+                    <hr style="width:100%; border:none; border-top:1px solid #ddd; margin:4px 0;">
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        <strong style="font-size:13px;">Social Resize (select sizes)</strong>
+                        <div style="display:flex; flex-wrap:wrap; gap:10px; font-size:12px;">
+                            <label><input type="checkbox" class="sizeOpt" value="ig_square"> IG Square 1080x1080</label>
+                            <label><input type="checkbox" class="sizeOpt" value="ig_portrait"> IG Portrait 1080x1350</label>
+                            <label><input type="checkbox" class="sizeOpt" value="ig_landscape"> IG Landscape 1080x566</label>
+                            <label><input type="checkbox" class="sizeOpt" value="fb_post"> Facebook Post 1200x630</label>
+                            <label><input type="checkbox" class="sizeOpt" value="li_post"> LinkedIn Post 1200x627</label>
+                            <label><input type="checkbox" class="sizeOpt" value="x_post"> X Post 1600x900</label>
+                        </div>
+                        <div style="display:flex; flex-wrap:wrap; gap:14px; font-size:12px; align-items:center;">
+                            <div>
+                                <label style="display:block; font-size:11px;">Fit Mode</label>
+                                <select id="resizeMode" style="font-size:12px; padding:2px 4px;">
+                                    <option value="fit">Fit (contain, pad)</option>
+                                    <option value="cover">Cover (crop overflow)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="display:block; font-size:11px;">Pad Color</label>
+                                <input type="color" id="padColor" value="#000000" style="width:40px; height:32px; padding:0;">
+                            </div>
+                            <label style="display:flex; gap:4px; align-items:center; margin-top:14px;">
+                                <input type="checkbox" id="usePadColor"> Fill Padding
+                            </label>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <button type="button" id="downloadSelectedSizes" style="padding:6px 10px;">Download Selected Sizes (ZIP)</button>
+                            <span id="multiSizeStatus" style="font-size:11px; color:#555;"></span>
+                        </div>
+                        <small style="font-size:11px; color:#666;">Maintains aspect ratio with transparent padding.</small>
+                    </div>
                 </div>
             </div>
             <div class="download">
@@ -179,6 +212,12 @@ const rotateValue = document.getElementById('rotateValue');
 const flipH = document.getElementById('flipH');
 const flipV = document.getElementById('flipV');
 const flipReset = document.getElementById('flipReset');
+const downloadSelectedSizesBtn = document.getElementById('downloadSelectedSizes');
+const multiSizeStatus = document.getElementById('multiSizeStatus');
+const sizeCheckboxes = document.querySelectorAll('.sizeOpt');
+const resizeModeSel = document.getElementById('resizeMode');
+const padColorInput = document.getElementById('padColor');
+const usePadColor = document.getElementById('usePadColor');
 let flipStateH = false;
 let flipStateV = false;
 // Track current text box pixel width (in image space approximate)
@@ -607,6 +646,55 @@ if(flipV){
 }
 if(flipReset){
     flipReset.addEventListener('click', () => { flipStateH=false; flipStateV=false; fetchAdjusted(); });
+}
+
+if(downloadSelectedSizesBtn){
+    downloadSelectedSizesBtn.addEventListener('click', async () => {
+        if(!resultFileName){ multiSizeStatus.textContent='No image'; return; }
+        const selected = Array.from(sizeCheckboxes).filter(c=>c.checked).map(c=>c.value);
+        if(selected.length===0){ multiSizeStatus.textContent='Select sizes'; return; }
+        multiSizeStatus.textContent='Building…';
+        // Base params replicate fetchAdjusted logic
+        const b = brightnessRange.value;
+        const s = sharpnessRange.value;
+    let url = `/multi_resize?file=${encodeURIComponent(resultFileName)}&brightness=${b}&sharpness=${s}&sizes=${selected.join(',')}`;
+    if(resizeModeSel){ url += `&mode=${encodeURIComponent(resizeModeSel.value)}`; }
+    if(usePadColor && usePadColor.checked && padColorInput){ url += `&pad=${encodeURIComponent(padColorInput.value.replace('#',''))}`; }
+        if(currentBgColor){ url += `&color=${encodeURIComponent(currentBgColor.replace('#',''))}`; }
+        if(currentBgImage){ url += `&bg_image=${encodeURIComponent(currentBgImage)}`; }
+        if(overlayText && overlayText.value.trim()){
+            url += `&text=${encodeURIComponent(overlayText.value)}`;
+            url += `&text_size=${encodeURIComponent(textSize.value || '48')}`;
+            url += `&text_color=${encodeURIComponent(textColor.value.replace('#',''))}`;
+            url += `&text_pos=${encodeURIComponent(textPos.value)}`;
+            if(textBold.checked) url += `&text_bold=1`;
+            const wToSend = overlayBoxWidthPx || textBoxClientWidth;
+            if(wToSend){ url += `&text_box_w=${encodeURIComponent(wToSend)}`; }
+            if(textAbsX !== null && textAbsY !== null){ url += `&text_x=${textAbsX}&text_y=${textAbsY}`; }
+            if(textRotateRange && textRotateRange.value !== '0'){ url += `&text_rotate=${encodeURIComponent(textRotateRange.value)}`; }
+        }
+        if(rotateRange && rotateRange.value !== '0'){ url += `&rotate=${encodeURIComponent(rotateRange.value)}`; }
+        let flipParam='';
+        if(flipStateH) flipParam+='h';
+        if(flipStateV) flipParam+='v';
+        if(flipParam) url += `&flip=${flipParam}`;
+        try {
+            const resp = await fetch(url);
+            if(!resp.ok) throw new Error('HTTP '+resp.status);
+            const blob = await resp.blob();
+            const a = document.createElement('a');
+            const obj = URL.createObjectURL(blob);
+            a.href = obj;
+            a.download = 'social_variants.zip';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(()=>{ URL.revokeObjectURL(obj); a.remove(); }, 1500);
+            multiSizeStatus.textContent='Done';
+        } catch(err){
+            multiSizeStatus.textContent='Error';
+            console.error(err);
+        }
+    });
 }
 </script>
 </body>
