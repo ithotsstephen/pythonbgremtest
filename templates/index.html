@@ -16,13 +16,19 @@
         <input type="file" name="image" accept="image/*" required>
         <button type="submit">Remove Background</button>
     </form>
-    {% if preview_img %}
+    {% if original_img or preview_img %}
     <div class="preview">
-        <h2>Preview:</h2>
-        <img src="{{ preview_img }}" alt="Preview">
+        {% if original_img %}
+        <h2>Original:</h2>
+        <img src="{{ original_img }}" alt="Original Image">
+        {% endif %}
+        {% if preview_img %}
+        <h2>Processed:</h2>
+        <img src="{{ preview_img }}" alt="Processed Image">
         <div class="download">
             <a href="{{ download_link }}" download>Download PNG</a>
         </div>
+        {% endif %}
     </div>
     {% endif %}
 </body>

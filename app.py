@@ -29,7 +29,9 @@ def index():
             result_filename = file.filename + '.png'
             preview_img = url_for('result_file', filename=result_filename)
             download_link = url_for('result_file', filename=result_filename)
+            original_img = url_for('uploaded_file', filename=file.filename)
             return render_template('index.html',
+                                   original_img=original_img,
                                    preview_img=preview_img,
                                    download_link=download_link)
     return render_template('index.html')
