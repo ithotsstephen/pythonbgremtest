@@ -20,18 +20,19 @@ def index():
         if file:
             input_path = os.path.join(UPLOAD_FOLDER, file.filename)
             file.save(input_path)
+            uploaded_img = url_for('uploaded_file', filename=file.filename)
             with open(input_path, 'rb') as inp:
                 output = remove(inp.read())
             output_img = Image.open(io.BytesIO(output))
             output_path = os.path.join(RESULT_FOLDER, file.filename + '.png')
             output_img.save(output_path)
-            from flask import url_for
             result_filename = file.filename + '.png'
             preview_img = url_for('result_file', filename=result_filename)
             download_link = url_for('result_file', filename=result_filename)
             return render_template('index.html',
                                    preview_img=preview_img,
-                                   download_link=download_link)
+                                   download_link=download_link,
+                                   uploaded_img=uploaded_img)
     return render_template('index.html')
 
 @app.route('/uploads/<filename>')
