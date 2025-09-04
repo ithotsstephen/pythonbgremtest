@@ -3,7 +3,7 @@ import io
 from flask import Flask, request, render_template, send_file, url_for, jsonify
 from werkzeug.utils import secure_filename
 from rembg import remove
-from PIL import Image
+from PIL import Image, ImageFont, ImageDraw
 
 UPLOAD_FOLDER = 'uploads'
 RESULT_FOLDER = 'results'
@@ -98,41 +98,44 @@ def render_image():
         s = float(request.args.get('sharpness', '1'))
     except ValueError:
         return 'bad params', 400
-    color_hex = request.args.get('color')  # expect like 'ffffff' or 'ff00aa'
+    color_hex = request.args.get('color')
     bg_image_name = request.args.get('bg_image')
+    text = request.args.get('text', '').strip()
+    text_color_hex = request.args.get('text_color', '000000')
+    text_size = request.args.get('text_size', '48')
+    text_font = request.args.get('text_font', '')
+    text_bold = request.args.get('text_bold', '0') == '1'
+    text_pos = request.args.get('text_pos', 'bc')
+    rotate = request.args.get('rotate', '0')
+    flip = request.args.get('flip', '')
     try:
+        # load and basic adjustments
         img = Image.open(base_path).convert('RGBA')
         if b != 1:
             img = ImageEnhance.Brightness(img).enhance(b)
         if s != 1:
             img = ImageEnhance.Sharpness(img).enhance(s)
         composed = img
+        # background composition
         if color_hex or bg_image_name:
             W, H = img.size
             if bg_image_name:
-                # sanitize
                 if '/' in bg_image_name or '..' in bg_image_name:
                     return 'bad bg name', 400
                 bg_path = os.path.join(BACKGROUND_FOLDER, bg_image_name)
                 if not os.path.exists(bg_path):
                     return 'bg not found', 404
                 bg_img = Image.open(bg_path).convert('RGBA')
-                # cover resize
                 bw, bh = bg_img.size
                 scale = max(W / bw, H / bh)
                 new_size = (int(bw * scale), int(bh * scale))
                 bg_img = bg_img.resize(new_size, Image.LANCZOS)
-                # crop center
                 left = (bg_img.width - W) // 2
                 top = (bg_img.height - H) // 2
                 bg_img = bg_img.crop((left, top, left + W, top + H))
                 base = bg_img
             else:
-                # color background
-                if color_hex.startswith('#'):
-                    color_hex_clean = color_hex[1:]
-                else:
-                    color_hex_clean = color_hex
+                color_hex_clean = color_hex.lstrip('#') if color_hex else ''
                 if len(color_hex_clean) not in (3,6):
                     return 'bad color', 400
                 if len(color_hex_clean) == 3:
@@ -147,6 +150,62 @@ def render_image():
                 base = PILImage.new('RGBA', (W,H), (r,g,bcol,255))
             base.alpha_composite(img)
             composed = base
+        # text overlay
+        if text:
+            draw = ImageDraw.Draw(composed)
+            tc = text_color_hex.lstrip('#')
+            if len(tc) == 3:
+                tc = ''.join(c*2 for c in tc)
+            if len(tc) != 6:
+                tc = '000000'
+            try:
+                tr = int(tc[0:2],16); tg = int(tc[2:4],16); tb = int(tc[4:6],16)
+            except ValueError:
+                tr, tg, tb = 0,0,0
+            try:
+                size_int = max(8, min(400, int(text_size)))
+            except ValueError:
+                size_int = 48
+            font_obj = None
+            if text_font:
+                font_path = os.path.join('fonts', os.path.basename(text_font))
+                if os.path.exists(font_path):
+                    try:
+                        font_obj = ImageFont.truetype(font_path, size_int)
+                    except Exception:
+                        font_obj = None
+            if font_obj is None:
+                try:
+                    font_obj = ImageFont.truetype("DejaVuSans.ttf", size_int)
+                except Exception:
+                    font_obj = ImageFont.load_default()
+            text_bbox = draw.textbbox((0,0), text, font=font_obj)
+            tw = text_bbox[2]-text_bbox[0]
+            th = text_bbox[3]-text_bbox[1]
+            W,H = composed.size
+            margin = 10
+            pos_map = {
+                'tl': (margin, margin), 'tc': ((W-tw)//2, margin), 'tr': (W - tw - margin, margin),
+                'cl': (margin, (H-th)//2), 'cc': ((W-tw)//2, (H-th)//2), 'cr': (W - tw - margin, (H-th)//2),
+                'bl': (margin, H - th - margin), 'bc': ((W-tw)//2, H - th - margin), 'br': (W - tw - margin, H - th - margin)
+            }
+            tx, ty = pos_map.get(text_pos, pos_map['bc'])
+            offsets = [(0,0),(1,0),(0,1),(1,1)] if text_bold else [(0,0)]
+            for ox, oy in offsets:
+                draw.text((tx+ox, ty+oy), text, font=font_obj, fill=(tr,tg,tb,255))
+        # flips
+        if flip:
+            if 'h' in flip:
+                composed = composed.transpose(Image.FLIP_LEFT_RIGHT)
+            if 'v' in flip:
+                composed = composed.transpose(Image.FLIP_TOP_BOTTOM)
+        # rotation
+        try:
+            rdeg = float(rotate)
+        except ValueError:
+            rdeg = 0
+        if rdeg % 360 != 0:
+            composed = composed.rotate(-rdeg, expand=True, resample=Image.BICUBIC)
         bio = io.BytesIO()
         composed.save(bio, format='PNG')
         bio.seek(0)

@@ -73,6 +73,52 @@
                         <span id="bgUploadStatus" style="font-size:12px; color:#555;"></span>
                         <button type="button" id="removeBgImage" style="display:none; padding:4px 8px;">Remove BG Image</button>
                     </div>
+                    <hr style="width:100%; border:none; border-top:1px solid #ddd; margin:4px 0;">
+                    <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
+                        <div style="flex:2; min-width:180px;">
+                            <label style="font-size:12px; display:block;">Text Overlay</label>
+                            <input type="text" id="overlayText" placeholder="Enter text" style="width:100%; padding:4px 6px;">
+                        </div>
+                        <div style="flex:1; min-width:90px;">
+                            <label style="font-size:12px; display:block;">Size</label>
+                            <input type="number" id="textSize" value="48" min="8" max="400" style="width:100%; padding:4px 6px;">
+                        </div>
+                        <div style="flex:1; min-width:110px;">
+                            <label style="font-size:12px; display:block;">Color</label>
+                            <input type="color" id="textColor" value="#000000" style="width:100%; height:32px; padding:0;">
+                        </div>
+                        <div style="flex:1; min-width:120px;">
+                            <label style="font-size:12px; display:block;">Position</label>
+                            <select id="textPos" style="width:100%; padding:4px 6px;">
+                                <option value="bc">Bottom Center</option>
+                                <option value="bl">Bottom Left</option>
+                                <option value="br">Bottom Right</option>
+                                <option value="tc">Top Center</option>
+                                <option value="tl">Top Left</option>
+                                <option value="tr">Top Right</option>
+                                <option value="cc">Center</option>
+                                <option value="cl">Center Left</option>
+                                <option value="cr">Center Right</option>
+                            </select>
+                        </div>
+                        <div style="flex:1; min-width:70px; display:flex; align-items:center; gap:4px;">
+                            <input type="checkbox" id="textBold">
+                            <label for="textBold" style="font-size:12px;">Bold</label>
+                        </div>
+                    </div>
+                    <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
+                        <div style="flex:1; min-width:160px;">
+                            <label style="font-size:12px; display:block;">Rotate (deg)</label>
+                            <input type="range" id="rotateRange" min="0" max="360" step="1" value="0" style="width:100%;">
+                        </div>
+                        <div style="display:flex; gap:6px; align-items:center;">
+                            <label style="font-size:12px;">Flip:</label>
+                            <button type="button" id="flipH" style="padding:4px 6px;">H</button>
+                            <button type="button" id="flipV" style="padding:4px 6px;">V</button>
+                            <button type="button" id="flipReset" style="padding:4px 6px;">Reset</button>
+                        </div>
+                        <span id="rotateValue" style="font-size:12px; color:#555;">0°</span>
+                    </div>
                 </div>
             </div>
             <div class="download">
@@ -104,13 +150,26 @@ const bgUploadStatus = document.getElementById('bgUploadStatus');
 const removeBgImageBtn = document.getElementById('removeBgImage');
 let currentBgColor = '';
 let currentBgImage = '';
+// Text & transform controls
+const overlayText = document.getElementById('overlayText');
+const textSize = document.getElementById('textSize');
+const textColor = document.getElementById('textColor');
+const textPos = document.getElementById('textPos');
+const textBold = document.getElementById('textBold');
+const rotateRange = document.getElementById('rotateRange');
+const rotateValue = document.getElementById('rotateValue');
+const flipH = document.getElementById('flipH');
+const flipV = document.getElementById('flipV');
+const flipReset = document.getElementById('flipReset');
+let flipStateH = false;
+let flipStateV = false;
 
 async function fetchAdjusted(){
     if(!processedImgEl || !resultFileName) return;
     const b = brightnessRange.value;
     const s = sharpnessRange.value;
     adjustStatus.textContent = 'Applying…';
-    const baseEndpoint = (currentBgColor || currentBgImage) ? '/render' : '/adjust';
+    const baseEndpoint = (currentBgColor || currentBgImage || (overlayText && overlayText.value.trim()) || (rotateRange && rotateRange.value !== '0') || (flipStateH || flipStateV)) ? '/render' : '/adjust';
     let url = `${baseEndpoint}?file=${encodeURIComponent(resultFileName)}&brightness=${b}&sharpness=${s}`;
     if(currentBgColor){
         url += `&color=${encodeURIComponent(currentBgColor.replace('#',''))}`;
@@ -118,6 +177,20 @@ async function fetchAdjusted(){
     if(currentBgImage){
         url += `&bg_image=${encodeURIComponent(currentBgImage)}`;
     }
+    if(overlayText && overlayText.value.trim()){
+        url += `&text=${encodeURIComponent(overlayText.value.trim())}`;
+        url += `&text_size=${encodeURIComponent(textSize.value || '48')}`;
+        url += `&text_color=${encodeURIComponent(textColor.value.replace('#',''))}`;
+        url += `&text_pos=${encodeURIComponent(textPos.value)}`;
+        if(textBold.checked) url += `&text_bold=1`;
+    }
+    if(rotateRange && rotateRange.value !== '0'){
+        url += `&rotate=${encodeURIComponent(rotateRange.value)}`;
+    }
+    let flipParam = '';
+    if(flipStateH) flipParam += 'h';
+    if(flipStateV) flipParam += 'v';
+    if(flipParam) url += `&flip=${flipParam}`;
     try {
         const resp = await fetch(url);
         if(!resp.ok) throw new Error('HTTP '+resp.status);
@@ -212,7 +285,7 @@ if (downloadProcessed && processedImgEl){
         // Fetch current adjusted image (ensuring latest slider values are applied)
         const b = brightnessRange.value;
         const s = sharpnessRange.value;
-        const baseEndpoint = (currentBgColor || currentBgImage) ? '/render' : '/adjust';
+        const baseEndpoint = (currentBgColor || currentBgImage || (overlayText && overlayText.value.trim()) || (rotateRange && rotateRange.value !== '0') || (flipStateH || flipStateV)) ? '/render' : '/adjust';
         let url = `${baseEndpoint}?file=${encodeURIComponent(resultFileName)}&brightness=${b}&sharpness=${s}`;
         if(currentBgColor){
             url += `&color=${encodeURIComponent(currentBgColor.replace('#',''))}`;
@@ -220,6 +293,20 @@ if (downloadProcessed && processedImgEl){
         if(currentBgImage){
             url += `&bg_image=${encodeURIComponent(currentBgImage)}`;
         }
+        if(overlayText && overlayText.value.trim()){
+            url += `&text=${encodeURIComponent(overlayText.value.trim())}`;
+            url += `&text_size=${encodeURIComponent(textSize.value || '48')}`;
+            url += `&text_color=${encodeURIComponent(textColor.value.replace('#',''))}`;
+            url += `&text_pos=${encodeURIComponent(textPos.value)}`;
+            if(textBold.checked) url += `&text_bold=1`;
+        }
+        if(rotateRange && rotateRange.value !== '0'){
+            url += `&rotate=${encodeURIComponent(rotateRange.value)}`;
+        }
+        let flipParam = '';
+        if(flipStateH) flipParam += 'h';
+        if(flipStateV) flipParam += 'v';
+        if(flipParam) url += `&flip=${flipParam}`;
         try {
             const resp = await fetch(url);
             if(!resp.ok) throw new Error('HTTP '+resp.status);
@@ -231,7 +318,10 @@ if (downloadProcessed && processedImgEl){
             const bSan = b.replace(/[^0-9.]/g,'');
             const sSan = s.replace(/[^0-9.]/g,'');
             const bgTag = currentBgColor ? `_bg${currentBgColor.replace('#','')}` : (currentBgImage ? `_bgimg` : '');
-            a.download = `${base}_b${bSan}_s${sSan}${bgTag}.png`;
+            let textTag = overlayText && overlayText.value.trim() ? '_txt' : '';
+            let rotTag = rotateRange && rotateRange.value !== '0' ? `_r${rotateRange.value}` : '';
+            let flipTag = flipParam ? `_f${flipParam}` : '';
+            a.download = `${base}_b${bSan}_s${sSan}${bgTag}${textTag}${rotTag}${flipTag}.png`;
             document.body.appendChild(a);
             a.click();
             setTimeout(()=>{ URL.revokeObjectURL(objectUrl); a.remove(); }, 1500);
@@ -265,6 +355,13 @@ if(clearBgBtn){
         currentBgColor = '';
         currentBgImage = '';
         removeBgImageBtn.style.display='none';
+        if(overlayText) overlayText.value='';
+        if(textSize) textSize.value='48';
+        if(textColor) textColor.value='#000000';
+        if(textPos) textPos.value='bc';
+        if(textBold) textBold.checked=false;
+        if(rotateRange){ rotateRange.value=0; rotateValue.textContent='0°'; }
+        flipStateH=false; flipStateV=false;
         fetchAdjusted();
     });
 }
@@ -301,6 +398,33 @@ if(removeBgImageBtn){
         removeBgImageBtn.style.display='none';
         fetchAdjusted();
     });
+}
+
+// Text & transform listeners
+const textInputs = [overlayText, textSize, textColor, textPos, textBold];
+textInputs.forEach(el => {
+    if(!el) return;
+    const evt = (el.type === 'text' || el.tagName === 'SELECT' || el.type === 'number') ? 'input' : 'change';
+    el.addEventListener(evt, () => {
+        fetchAdjusted();
+    });
+});
+
+if(rotateRange){
+    rotateRange.addEventListener('input', () => {
+        rotateValue.textContent = rotateRange.value + '°';
+        fetchAdjusted();
+    });
+}
+
+if(flipH){
+    flipH.addEventListener('click', () => { flipStateH = !flipStateH; fetchAdjusted(); });
+}
+if(flipV){
+    flipV.addEventListener('click', () => { flipStateV = !flipStateV; fetchAdjusted(); });
+}
+if(flipReset){
+    flipReset.addEventListener('click', () => { flipStateH=false; flipStateV=false; fetchAdjusted(); });
 }
 </script>
 </body>
