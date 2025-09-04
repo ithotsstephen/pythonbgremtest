@@ -16,6 +16,10 @@
         <input type="file" name="image" id="imageInput" accept="image/*" required>
         <button type="submit">Remove Background</button>
     </form>
+    <div class="preview" id="instantOriginal" style="display:none;">
+        <h2>Original (Not Uploaded Yet):</h2>
+        <img id="instantOriginalImg" src="#" alt="Selected Image Preview">
+    </div>
     {% if original_img or preview_img %}
     <div class="preview">
         {% if original_img %}
@@ -32,14 +36,40 @@
     </div>
     {% endif %}
 <script>
-// When selecting a new file, hide existing preview images to reset UI.
-document.getElementById('imageInput').addEventListener('click', function() {
-    const previewContainer = document.querySelector('.preview');
-    if (previewContainer) {
-        // Remove all child img elements and related download link sections
-        previewContainer.innerHTML = '';
+const fileInput = document.getElementById('imageInput');
+const instantBox = document.getElementById('instantOriginal');
+const instantImg = document.getElementById('instantOriginalImg');
+
+fileInput.addEventListener('change', function(){
+    const file = this.files && this.files[0];
+    if(!file){ instantBox.style.display='none'; return; }
+    const reader = new FileReader();
+    reader.onload = e => {
+        instantImg.src = e.target.result;
+        instantBox.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+});
+
+// Reset server-rendered preview when a new selection starts (before submit)
+fileInput.addEventListener('click', function(){
+    // Only clear the server processed preview area, not the instant preview container
+    const serverPreview = document.querySelectorAll('.preview');
+    if (serverPreview && serverPreview.length > 0){
+        // Keep the instantOriginal (has id) but clear other preview blocks containing 'Processed' or 'Original:' labels
+        serverPreview.forEach(el => {
+            if(el.id !== 'instantOriginal'){
+                el.innerHTML = '';
+            }
+        });
     }
 });
+
+// Hide instant preview if a server-rendered Original Image exists
+if (document.querySelector('img[alt="Original Image"]')) {
+    const ib = document.getElementById('instantOriginal');
+    if (ib) ib.style.display='none';
+}
 </script>
 </body>
 </html>
