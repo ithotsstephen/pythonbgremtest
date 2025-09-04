@@ -12,8 +12,8 @@
 </head>
 <body>
     <h1>Background Remover App</h1>
-    <form method="POST" enctype="multipart/form-data">
-        <input type="file" name="image" accept="image/*" required>
+    <form method="POST" enctype="multipart/form-data" id="bgForm">
+        <input type="file" name="image" id="imageInput" accept="image/*" required>
         <button type="submit">Remove Background</button>
     </form>
     {% if original_img or preview_img %}
@@ -31,5 +31,15 @@
         {% endif %}
     </div>
     {% endif %}
+<script>
+// When selecting a new file, hide existing preview images to reset UI.
+document.getElementById('imageInput').addEventListener('click', function() {
+    const previewContainer = document.querySelector('.preview');
+    if (previewContainer) {
+        // Remove all child img elements and related download link sections
+        previewContainer.innerHTML = '';
+    }
+});
+</script>
 </body>
 </html>
