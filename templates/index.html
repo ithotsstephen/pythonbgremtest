@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Background Remover</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .preview { margin-top: 20px; }
+        img { max-width: 400px; border: 1px solid #ccc; }
+        .download { margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Background Remover App</h1>
+    <form method="POST" enctype="multipart/form-data">
+        <input type="file" name="image" accept="image/*" required>
+        <button type="submit">Remove Background</button>
+    </form>
+    {% if preview_img %}
+    <div class="preview">
+        <h2>Preview:</h2>
+        <img src="{{ preview_img }}" alt="Preview">
+        <div class="download">
+            <a href="{{ download_link }}" download>Download PNG</a>
+        </div>
+    </div>
+    {% endif %}
+</body>
+</html>
