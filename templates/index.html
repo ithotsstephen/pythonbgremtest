@@ -48,6 +48,32 @@
                     <button type="button" id="resetAdjust" style="padding:6px 10px;">Reset</button>
                     <span id="adjustStatus" style="font-size:12px; color:#555; align-self:center;">Adjust the sliders</span>
                 </div>
+                <hr style="margin:14px -14px; border:none; border-top:1px solid #ddd;">
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                        <strong style="font-size:14px;">Background:</strong>
+                        <div id="colorSwatches" style="display:flex; gap:6px; flex-wrap:wrap;">
+                            <!-- common colors -->
+                            <button type="button" class="swatch" data-color="#ffffff" style="width:26px;height:26px;border:1px solid #bbb;background:#ffffff;border-radius:4px;"></button>
+                            <button type="button" class="swatch" data-color="#000000" style="width:26px;height:26px;border:1px solid #000;background:#000000;border-radius:4px;"></button>
+                            <button type="button" class="swatch" data-color="#f44336" style="width:26px;height:26px;border:1px solid #c62828;background:#f44336;border-radius:4px;"></button>
+                            <button type="button" class="swatch" data-color="#2196f3" style="width:26px;height:26px;border:1px solid #1565c0;background:#2196f3;border-radius:4px;"></button>
+                            <button type="button" class="swatch" data-color="#4caf50" style="width:26px;height:26px;border:1px solid #2e7d32;background:#4caf50;border-radius:4px;"></button>
+                            <button type="button" class="swatch" data-color="#ffeb3b" style="width:26px;height:26px;border:1px solid #f9a825;background:#ffeb3b;border-radius:4px;"></button>
+                            <button type="button" class="swatch" data-color="#ff9800" style="width:26px;height:26px;border:1px solid #ef6c00;background:#ff9800;border-radius:4px;"></button>
+                            <button type="button" class="swatch" data-color="#9c27b0" style="width:26px;height:26px;border:1px solid #6a0080;background:#9c27b0;border-radius:4px;"></button>
+                            <button type="button" class="swatch" data-color="#00bcd4" style="width:26px;height:26px;border:1px solid #00838f;background:#00bcd4;border-radius:4px;"></button>
+                            <button type="button" class="swatch" data-color="#eeeeee" style="width:26px;height:26px;border:1px solid #bdbdbd;background:#eeeeee;border-radius:4px;"></button>
+                        </div>
+                        <input type="color" id="customColor" value="#ffffff" title="Custom color" style="width:40px;height:32px;padding:0;border:1px solid #ccc;border-radius:4px;">
+                        <button type="button" id="clearBg" style="padding:4px 8px;">Transparent</button>
+                    </div>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                        <label style="font-size:13px;">Upload BG Image <input type="file" id="bgImageInput" accept="image/*" style="font-size:12px;"></label>
+                        <span id="bgUploadStatus" style="font-size:12px; color:#555;"></span>
+                        <button type="button" id="removeBgImage" style="display:none; padding:4px 8px;">Remove BG Image</button>
+                    </div>
+                </div>
             </div>
             <div class="download">
                 <a id="downloadProcessed" href="{{ download_link }}" download>Download PNG</a>
@@ -70,20 +96,35 @@ const adjustStatus = document.getElementById('adjustStatus');
 const resetAdjust = document.getElementById('resetAdjust');
 const resultFileName = "{{ result_filename if result_filename else '' }}";
 const downloadProcessed = document.getElementById('downloadProcessed');
+const swatches = document.querySelectorAll('.swatch');
+const customColor = document.getElementById('customColor');
+const clearBgBtn = document.getElementById('clearBg');
+const bgImageInput = document.getElementById('bgImageInput');
+const bgUploadStatus = document.getElementById('bgUploadStatus');
+const removeBgImageBtn = document.getElementById('removeBgImage');
+let currentBgColor = '';
+let currentBgImage = '';
 
 async function fetchAdjusted(){
     if(!processedImgEl || !resultFileName) return;
     const b = brightnessRange.value;
     const s = sharpnessRange.value;
     adjustStatus.textContent = 'Applying…';
-    const url = `/adjust?file=${encodeURIComponent(resultFileName)}&brightness=${b}&sharpness=${s}`;
+    const baseEndpoint = (currentBgColor || currentBgImage) ? '/render' : '/adjust';
+    let url = `${baseEndpoint}?file=${encodeURIComponent(resultFileName)}&brightness=${b}&sharpness=${s}`;
+    if(currentBgColor){
+        url += `&color=${encodeURIComponent(currentBgColor.replace('#',''))}`;
+    }
+    if(currentBgImage){
+        url += `&bg_image=${encodeURIComponent(currentBgImage)}`;
+    }
     try {
         const resp = await fetch(url);
         if(!resp.ok) throw new Error('HTTP '+resp.status);
         const blob = await resp.blob();
         const objURL = URL.createObjectURL(blob);
         processedImgEl.src = objURL;
-        adjustStatus.textContent = `B ${b} | S ${s}`;
+        adjustStatus.textContent = `B ${b} | S ${s}` + (currentBgColor ? ` | BG color` : (currentBgImage ? ' | BG image' : ''));
     } catch(err){
         adjustStatus.textContent = 'Error: '+err.message;
     }
@@ -104,6 +145,9 @@ if (resetAdjust){
         if(!brightnessRange || !sharpnessRange) return;
         brightnessRange.value = 1;
         sharpnessRange.value = 1;
+    currentBgColor = '';
+    currentBgImage = '';
+    removeBgImageBtn.style.display='none';
         fetchAdjusted();
     });
 }
@@ -168,7 +212,14 @@ if (downloadProcessed && processedImgEl){
         // Fetch current adjusted image (ensuring latest slider values are applied)
         const b = brightnessRange.value;
         const s = sharpnessRange.value;
-        const url = `/adjust?file=${encodeURIComponent(resultFileName)}&brightness=${b}&sharpness=${s}`;
+        const baseEndpoint = (currentBgColor || currentBgImage) ? '/render' : '/adjust';
+        let url = `${baseEndpoint}?file=${encodeURIComponent(resultFileName)}&brightness=${b}&sharpness=${s}`;
+        if(currentBgColor){
+            url += `&color=${encodeURIComponent(currentBgColor.replace('#',''))}`;
+        }
+        if(currentBgImage){
+            url += `&bg_image=${encodeURIComponent(currentBgImage)}`;
+        }
         try {
             const resp = await fetch(url);
             if(!resp.ok) throw new Error('HTTP '+resp.status);
@@ -179,13 +230,76 @@ if (downloadProcessed && processedImgEl){
             const base = resultFileName.replace(/\.png$/i,'');
             const bSan = b.replace(/[^0-9.]/g,'');
             const sSan = s.replace(/[^0-9.]/g,'');
-            a.download = `${base}_b${bSan}_s${sSan}.png`;
+            const bgTag = currentBgColor ? `_bg${currentBgColor.replace('#','')}` : (currentBgImage ? `_bgimg` : '');
+            a.download = `${base}_b${bSan}_s${sSan}${bgTag}.png`;
             document.body.appendChild(a);
             a.click();
             setTimeout(()=>{ URL.revokeObjectURL(objectUrl); a.remove(); }, 1500);
         } catch(err){
             console.error('Download failed', err);
         }
+    });
+}
+
+// Background color swatches
+swatches.forEach(btn => {
+    btn.addEventListener('click', () => {
+        currentBgColor = btn.getAttribute('data-color');
+        currentBgImage = '';
+        removeBgImageBtn.style.display='none';
+        fetchAdjusted();
+    });
+});
+
+if(customColor){
+    customColor.addEventListener('input', () => {
+        currentBgColor = customColor.value;
+        currentBgImage = '';
+        removeBgImageBtn.style.display='none';
+        fetchAdjusted();
+    });
+}
+
+if(clearBgBtn){
+    clearBgBtn.addEventListener('click', () => {
+        currentBgColor = '';
+        currentBgImage = '';
+        removeBgImageBtn.style.display='none';
+        fetchAdjusted();
+    });
+}
+
+// Upload custom background image
+if(bgImageInput){
+    bgImageInput.addEventListener('change', async () => {
+        const file = bgImageInput.files && bgImageInput.files[0];
+        if(!file) return;
+        const formData = new FormData();
+        formData.append('bg', file);
+        bgUploadStatus.textContent = 'Uploading...';
+        try {
+            const resp = await fetch('/upload_bg', { method: 'POST', body: formData });
+            const data = await resp.json();
+            if(!resp.ok){
+                throw new Error(data.error || resp.status);
+            }
+            currentBgImage = data.filename;
+            currentBgColor = '';
+            removeBgImageBtn.style.display='inline-block';
+            bgUploadStatus.textContent = 'BG image set';
+            fetchAdjusted();
+        } catch(err){
+            bgUploadStatus.textContent = 'Error';
+            console.error(err);
+        }
+    });
+}
+
+if(removeBgImageBtn){
+    removeBgImageBtn.addEventListener('click', () => {
+        currentBgImage = '';
+        removeBgImageBtn.style.display='none';
+        fetchAdjusted();
     });
 }
 </script>

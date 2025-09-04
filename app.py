@@ -1,13 +1,16 @@
 import os
 import io
-from flask import Flask, request, render_template, send_file, url_for
+from flask import Flask, request, render_template, send_file, url_for, jsonify
+from werkzeug.utils import secure_filename
 from rembg import remove
 from PIL import Image
 
 UPLOAD_FOLDER = 'uploads'
 RESULT_FOLDER = 'results'
+BACKGROUND_FOLDER = 'backgrounds'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULT_FOLDER, exist_ok=True)
+os.makedirs(BACKGROUND_FOLDER, exist_ok=True)
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -61,6 +64,91 @@ def adjust():
             img = ImageEnhance.Sharpness(img).enhance(s)
         bio = io.BytesIO()
         img.save(bio, format='PNG')
+        bio.seek(0)
+        return send_file(bio, mimetype='image/png')
+    except Exception as e:
+        return f'error {e}', 500
+
+@app.route('/upload_bg', methods=['POST'])
+def upload_bg():
+    file = request.files.get('bg')
+    if not file:
+        return jsonify({'error': 'no file'}), 400
+    filename = secure_filename(file.filename)
+    if not filename:
+        return jsonify({'error': 'bad filename'}), 400
+    path = os.path.join(BACKGROUND_FOLDER, filename)
+    file.save(path)
+    return jsonify({'filename': filename})
+
+@app.route('/render')
+def render_image():
+    """Compose processed image with optional brightness/sharpness + background color or image."""
+    from PIL import ImageEnhance
+    fname = request.args.get('file')
+    if not fname:
+        return 'missing file', 400
+    if '/' in fname or '..' in fname:
+        return 'bad name', 400
+    base_path = os.path.join(RESULT_FOLDER, fname)
+    if not os.path.exists(base_path):
+        return 'not found', 404
+    try:
+        b = float(request.args.get('brightness', '1'))
+        s = float(request.args.get('sharpness', '1'))
+    except ValueError:
+        return 'bad params', 400
+    color_hex = request.args.get('color')  # expect like 'ffffff' or 'ff00aa'
+    bg_image_name = request.args.get('bg_image')
+    try:
+        img = Image.open(base_path).convert('RGBA')
+        if b != 1:
+            img = ImageEnhance.Brightness(img).enhance(b)
+        if s != 1:
+            img = ImageEnhance.Sharpness(img).enhance(s)
+        composed = img
+        if color_hex or bg_image_name:
+            W, H = img.size
+            if bg_image_name:
+                # sanitize
+                if '/' in bg_image_name or '..' in bg_image_name:
+                    return 'bad bg name', 400
+                bg_path = os.path.join(BACKGROUND_FOLDER, bg_image_name)
+                if not os.path.exists(bg_path):
+                    return 'bg not found', 404
+                bg_img = Image.open(bg_path).convert('RGBA')
+                # cover resize
+                bw, bh = bg_img.size
+                scale = max(W / bw, H / bh)
+                new_size = (int(bw * scale), int(bh * scale))
+                bg_img = bg_img.resize(new_size, Image.LANCZOS)
+                # crop center
+                left = (bg_img.width - W) // 2
+                top = (bg_img.height - H) // 2
+                bg_img = bg_img.crop((left, top, left + W, top + H))
+                base = bg_img
+            else:
+                # color background
+                if color_hex.startswith('#'):
+                    color_hex_clean = color_hex[1:]
+                else:
+                    color_hex_clean = color_hex
+                if len(color_hex_clean) not in (3,6):
+                    return 'bad color', 400
+                if len(color_hex_clean) == 3:
+                    color_hex_clean = ''.join(c*2 for c in color_hex_clean)
+                try:
+                    r = int(color_hex_clean[0:2],16)
+                    g = int(color_hex_clean[2:4],16)
+                    bcol = int(color_hex_clean[4:6],16)
+                except ValueError:
+                    return 'bad color', 400
+                from PIL import Image as PILImage
+                base = PILImage.new('RGBA', (W,H), (r,g,bcol,255))
+            base.alpha_composite(img)
+            composed = base
+        bio = io.BytesIO()
+        composed.save(bio, format='PNG')
         bio.seek(0)
         return send_file(bio, mimetype='image/png')
     except Exception as e:
