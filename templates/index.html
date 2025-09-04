@@ -12,51 +12,18 @@
 </head>
 <body>
     <h1>Background Remover App</h1>
-    <form id="uploadForm" method="POST" enctype="multipart/form-data">
-        <input type="file" id="inputImage" name="image" accept="image/*" required onchange="showUploadedImage(event)">
+    <form method="POST" enctype="multipart/form-data">
+        <input type="file" name="image" accept="image/*" required>
         <button type="submit">Remove Background</button>
     </form>
-    <div id="uploadedPreview" class="preview" style="display:none;">
-        <h2>Uploaded Image:</h2>
-        <img id="uploadedImg" src="#" alt="Uploaded Preview" style="max-width:400px; border:1px solid #ccc;">
-    </div>
-    <div id="loading" style="display:none; margin-top:20px;">
-        <h2>Processing...</h2>
-        <div style="width:50px;height:50px;border:5px solid #ccc;border-top:5px solid #007bff;border-radius:50%;animation:spin 1s linear infinite;"></div>
-    </div>
     {% if preview_img %}
-    <div class="preview" id="outputPreview">
-        <h2>Output Preview:</h2>
+    <div class="preview">
+        <h2>Preview:</h2>
         <img src="{{ preview_img }}" alt="Preview">
         <div class="download">
             <a href="{{ download_link }}" download>Download PNG</a>
         </div>
     </div>
     {% endif %}
-    <script>
-    function showUploadedImage(event) {
-        var input = event.target;
-        if (input.files && input.files[0]) {
-            var reader = new FileReader();
-            reader.onload = function(e) {
-                document.getElementById('uploadedImg').src = e.target.result;
-                document.getElementById('uploadedPreview').style.display = 'block';
-            }
-            reader.readAsDataURL(input.files[0]);
-        }
-    }
-    document.getElementById('uploadForm').onsubmit = function() {
-        document.getElementById('loading').style.display = 'block';
-        document.getElementById('outputPreview')?.style.display = 'none';
-        // Optionally hide preview after submit
-        // document.getElementById('uploadedPreview').style.display = 'none';
-    }
-    </script>
-    <style>
-    @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-    }
-    </style>
 </body>
 </html>
