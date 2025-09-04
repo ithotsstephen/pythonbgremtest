@@ -5,9 +5,13 @@
     <title>Background Remover</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 40px; }
-        .preview { margin-top: 20px; }
-        img { max-width: 400px; border: 1px solid #ccc; }
+        .preview-grid { display: flex; gap: 40px; align-items: flex-start; margin-top: 30px; }
+        .col { flex: 1; min-width: 0; }
+        h2 { margin-top: 0; }
+        img { max-width: 100%; border: 1px solid #ccc; border-radius:4px; background:#fff; }
         .download { margin-top: 10px; }
+        .placeholder { padding: 40px; border:2px dashed #ccc; text-align:center; color:#777; font-size:14px; }
+        @media (max-width: 900px){ .preview-grid { flex-direction: column; } }
     </style>
 </head>
 <body>
@@ -16,59 +20,173 @@
         <input type="file" name="image" id="imageInput" accept="image/*" required>
         <button type="submit">Remove Background</button>
     </form>
-    <div class="preview" id="instantOriginal" style="display:none;">
-        <h2>Original (Not Uploaded Yet):</h2>
-        <img id="instantOriginalImg" src="#" alt="Selected Image Preview">
-    </div>
-    {% if original_img or preview_img %}
-    <div class="preview">
-        {% if original_img %}
-        <h2>Original:</h2>
-        <img src="{{ original_img }}" alt="Original Image">
-        {% endif %}
-        {% if preview_img %}
-        <h2>Processed:</h2>
-        <img src="{{ preview_img }}" alt="Processed Image">
-        <div class="download">
-            <a href="{{ download_link }}" download>Download PNG</a>
+    <!-- Hidden instant preview image element reused inside Original column -->
+    <img id="instantOriginalImg" src="#" alt="Selected Image Preview" style="display:none; max-width:100%; border:1px solid #ccc; border-radius:4px; background:#fff; margin-top:10px;" />
+    <div class="preview-grid">
+        <div class="col" id="col-original">
+            <h2>Original</h2>
+            {% if original_img %}
+            <img src="{{ original_img }}" alt="Original Image" id="serverOriginalImg">
+            {% else %}
+            <div class="placeholder" id="originalPlaceholder">No image selected</div>
+            {% endif %}
         </div>
-        {% endif %}
+        <div class="col" id="col-processed">
+            <h2>Processed</h2>
+            {% if preview_img %}
+            <img src="{{ preview_img }}" alt="Processed Image" id="processedImg">
+            <div id="adjustControls" style="margin-top:15px; background:#f5f5f5; padding:12px 14px; border:1px solid #ddd; border-radius:6px;">
+                <div style="display:flex; gap:14px; flex-wrap:wrap;">
+                    <label style="flex:1; min-width:160px;">Brightness
+                        <input type="range" id="brightnessRange" min="0.2" max="2" step="0.05" value="1" style="width:100%;">
+                    </label>
+                    <label style="flex:1; min-width:160px;">Sharpness
+                        <input type="range" id="sharpnessRange" min="0" max="3" step="0.1" value="1" style="width:100%;">
+                    </label>
+                </div>
+                <div style="display:flex; gap:8px; margin-top:10px;">
+                    <button type="button" id="resetAdjust" style="padding:6px 10px;">Reset</button>
+                    <span id="adjustStatus" style="font-size:12px; color:#555; align-self:center;">Adjust the sliders</span>
+                </div>
+            </div>
+            <div class="download">
+                <a id="downloadProcessed" href="{{ download_link }}" download>Download PNG</a>
+            </div>
+            {% else %}
+            <div class="placeholder" id="processedPlaceholder">Process to see result</div>
+            {% endif %}
+        </div>
     </div>
-    {% endif %}
 <script>
 const fileInput = document.getElementById('imageInput');
-const instantBox = document.getElementById('instantOriginal');
 const instantImg = document.getElementById('instantOriginalImg');
+const originalCol = document.getElementById('col-original');
+const originalPlaceholder = document.getElementById('originalPlaceholder');
+const processedCol = document.getElementById('col-processed');
+const processedImgEl = document.getElementById('processedImg');
+const brightnessRange = document.getElementById('brightnessRange');
+const sharpnessRange = document.getElementById('sharpnessRange');
+const adjustStatus = document.getElementById('adjustStatus');
+const resetAdjust = document.getElementById('resetAdjust');
+const resultFileName = "{{ result_filename if result_filename else '' }}";
+const downloadProcessed = document.getElementById('downloadProcessed');
+
+async function fetchAdjusted(){
+    if(!processedImgEl || !resultFileName) return;
+    const b = brightnessRange.value;
+    const s = sharpnessRange.value;
+    adjustStatus.textContent = 'Applying…';
+    const url = `/adjust?file=${encodeURIComponent(resultFileName)}&brightness=${b}&sharpness=${s}`;
+    try {
+        const resp = await fetch(url);
+        if(!resp.ok) throw new Error('HTTP '+resp.status);
+        const blob = await resp.blob();
+        const objURL = URL.createObjectURL(blob);
+        processedImgEl.src = objURL;
+        adjustStatus.textContent = `B ${b} | S ${s}`;
+    } catch(err){
+        adjustStatus.textContent = 'Error: '+err.message;
+    }
+}
+
+if (brightnessRange && sharpnessRange){
+    let debounceTimer;
+    const handler = () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(fetchAdjusted, 180);
+    };
+    brightnessRange.addEventListener('input', handler);
+    sharpnessRange.addEventListener('input', handler);
+}
+
+if (resetAdjust){
+    resetAdjust.addEventListener('click', () => {
+        if(!brightnessRange || !sharpnessRange) return;
+        brightnessRange.value = 1;
+        sharpnessRange.value = 1;
+        fetchAdjusted();
+    });
+}
+
+function ensurePlaceholder(col, id, text){
+    let el = document.getElementById(id);
+    if(!el){
+        el = document.createElement('div');
+        el.id = id;
+        el.className = 'placeholder';
+        el.textContent = text;
+        col.appendChild(el);
+    } else {
+        el.style.display='block';
+    }
+}
+
+function resetForNewSelection(){
+    // Remove server original image
+    const serverOriginal = document.getElementById('serverOriginalImg');
+    if(serverOriginal) serverOriginal.remove();
+    // Remove processed image & download link
+    const processedImg = document.getElementById('processedImg');
+    if(processedImg) processedImg.remove();
+    const downloadLinkWrapper = processedCol.querySelector('.download');
+    if(downloadLinkWrapper) downloadLinkWrapper.remove();
+    // Recreate / show placeholders
+    ensurePlaceholder(originalCol, 'originalPlaceholder', 'No image selected');
+    ensurePlaceholder(processedCol, 'processedPlaceholder', 'Process to see result');
+    // Hide instant preview until change event loads new image
+    instantImg.style.display='none';
+}
 
 fileInput.addEventListener('change', function(){
     const file = this.files && this.files[0];
-    if(!file){ instantBox.style.display='none'; return; }
+    if(!file){ instantImg.style.display='none'; return; }
     const reader = new FileReader();
     reader.onload = e => {
         instantImg.src = e.target.result;
-        instantBox.style.display = 'block';
+        instantImg.style.display = 'block';
+        if (originalPlaceholder) originalPlaceholder.remove();
+        if (!originalCol.querySelector('#instantOriginalImg')) {
+            originalCol.appendChild(instantImg);
+        }
     };
     reader.readAsDataURL(file);
 });
 
-// Reset server-rendered preview when a new selection starts (before submit)
-fileInput.addEventListener('click', function(){
-    // Only clear the server processed preview area, not the instant preview container
-    const serverPreview = document.querySelectorAll('.preview');
-    if (serverPreview && serverPreview.length > 0){
-        // Keep the instantOriginal (has id) but clear other preview blocks containing 'Processed' or 'Original:' labels
-        serverPreview.forEach(el => {
-            if(el.id !== 'instantOriginal'){
-                el.innerHTML = '';
-            }
-        });
-    }
-});
+// Reset everything on click (before file chooser opens)
+fileInput.addEventListener('click', resetForNewSelection);
 
 // Hide instant preview if a server-rendered Original Image exists
 if (document.querySelector('img[alt="Original Image"]')) {
-    const ib = document.getElementById('instantOriginal');
-    if (ib) ib.style.display='none';
+    instantImg.style.display='none';
+}
+
+// Enable downloading the currently adjusted version instead of the original processed file
+if (downloadProcessed && processedImgEl){
+    downloadProcessed.addEventListener('click', async (e) => {
+        if(!resultFileName || !brightnessRange || !sharpnessRange) return; // fallback to normal href
+        e.preventDefault();
+        // Fetch current adjusted image (ensuring latest slider values are applied)
+        const b = brightnessRange.value;
+        const s = sharpnessRange.value;
+        const url = `/adjust?file=${encodeURIComponent(resultFileName)}&brightness=${b}&sharpness=${s}`;
+        try {
+            const resp = await fetch(url);
+            if(!resp.ok) throw new Error('HTTP '+resp.status);
+            const blob = await resp.blob();
+            const a = document.createElement('a');
+            const objectUrl = URL.createObjectURL(blob);
+            a.href = objectUrl;
+            const base = resultFileName.replace(/\.png$/i,'');
+            const bSan = b.replace(/[^0-9.]/g,'');
+            const sSan = s.replace(/[^0-9.]/g,'');
+            a.download = `${base}_b${bSan}_s${sSan}.png`;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(()=>{ URL.revokeObjectURL(objectUrl); a.remove(); }, 1500);
+        } catch(err){
+            console.error('Download failed', err);
+        }
+    });
 }
 </script>
 </body>

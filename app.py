@@ -33,8 +33,38 @@ def index():
             return render_template('index.html',
                                    original_img=original_img,
                                    preview_img=preview_img,
-                                   download_link=download_link)
+                                   download_link=download_link,
+                                   result_filename=result_filename)
     return render_template('index.html')
+
+@app.route('/adjust')
+def adjust():
+    from PIL import ImageEnhance
+    fname = request.args.get('file')
+    if not fname:
+        return 'missing file', 400
+    if '/' in fname or '..' in fname:
+        return 'bad name', 400
+    path = os.path.join(RESULT_FOLDER, fname)
+    if not os.path.exists(path):
+        return 'not found', 404
+    try:
+        b = float(request.args.get('brightness', '1'))
+        s = float(request.args.get('sharpness', '1'))
+    except ValueError:
+        return 'bad params', 400
+    try:
+        img = Image.open(path).convert('RGBA')
+        if b != 1:
+            img = ImageEnhance.Brightness(img).enhance(b)
+        if s != 1:
+            img = ImageEnhance.Sharpness(img).enhance(s)
+        bio = io.BytesIO()
+        img.save(bio, format='PNG')
+        bio.seek(0)
+        return send_file(bio, mimetype='image/png')
+    except Exception as e:
+        return f'error {e}', 500
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
