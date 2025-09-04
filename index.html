@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Background Remover App</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; background: #f8f9fa; }
+        .container { max-width: 500px; margin: auto; background: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        h1 { text-align: center; }
+        .preview, .output { margin-top: 20px; text-align: center; }
+        img { max-width: 100%; border: 1px solid #ccc; border-radius: 5px; }
+        .download { margin-top: 10px; }
+        .loader { width:50px;height:50px;border:5px solid #ccc;border-top:5px solid #007bff;border-radius:50%;animation:spin 1s linear infinite;margin:auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Background Remover</h1>
+        <form id="uploadForm" method="POST" enctype="multipart/form-data" action="/">
+            <input type="file" id="inputImage" name="image" accept="image/*" required onchange="showUploadedImage(event)">
+            <button type="submit">Remove Background</button>
+        </form>
+        <div id="uploadedPreview" class="preview" style="display:none;">
+            <h2>Uploaded Image:</h2>
+            <img id="uploadedImg" src="#" alt="Uploaded Preview">
+        </div>
+        <div id="loading" style="display:none; margin-top:20px;">
+            <h2>Processing...</h2>
+            <div class="loader"></div>
+        </div>
+        <div id="outputPreview" class="output" style="display:none;">
+            <h2>Output Preview:</h2>
+            <img id="outputImg" src="#" alt="Output Preview">
+            <div class="download">
+                <a id="downloadLink" href="#" download>Download PNG</a>
+            </div>
+        </div>
+    </div>
+    <script>
+    function showUploadedImage(event) {
+        var input = event.target;
+        if (input.files && input.files[0]) {
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                document.getElementById('uploadedImg').src = e.target.result;
+                document.getElementById('uploadedPreview').style.display = 'block';
+            }
+            reader.readAsDataURL(input.files[0]);
+        }
+    }
+    document.getElementById('uploadForm').onsubmit = function() {
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('outputPreview').style.display = 'none';
+    }
+    // If you want to auto-show output after server response, use Flask template variables or AJAX
+    </script>
+</body>
+</html>

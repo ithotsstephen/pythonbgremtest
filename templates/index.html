@@ -16,12 +16,10 @@
         <input type="file" id="inputImage" name="image" accept="image/*" required onchange="showUploadedImage(event)">
         <button type="submit">Remove Background</button>
     </form>
-    {% if uploaded_img %}
-    <div id="uploadedPreview" class="preview">
+    <div id="uploadedPreview" class="preview" style="display:none;">
         <h2>Uploaded Image:</h2>
-        <img id="uploadedImg" src="{{ uploaded_img }}" alt="Uploaded Preview">
+        <img id="uploadedImg" src="#" alt="Uploaded Preview" style="max-width:400px; border:1px solid #ccc;">
     </div>
-    {% endif %}
     <div id="loading" style="display:none; margin-top:20px;">
         <h2>Processing...</h2>
         <div style="width:50px;height:50px;border:5px solid #ccc;border-top:5px solid #007bff;border-radius:50%;animation:spin 1s linear infinite;"></div>
@@ -50,6 +48,8 @@
     document.getElementById('uploadForm').onsubmit = function() {
         document.getElementById('loading').style.display = 'block';
         document.getElementById('outputPreview')?.style.display = 'none';
+        // Optionally hide preview after submit
+        // document.getElementById('uploadedPreview').style.display = 'none';
     }
     </script>
     <style>
