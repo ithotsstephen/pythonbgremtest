@@ -1,0 +1,303 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF Merge</title>
+<style>
+  body{font-family:system-ui,Arial,sans-serif;background:#fff;margin:0}
+  .wrap{max-width:980px;margin:20px auto;padding:0 16px}
+  .card{background:#fafafa;padding:14px;border-radius:8px;border:1px solid #ddd}
+  .controls{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+  .btn{background:#1976d2;color:#fff;border:0;padding:9px 14px;border-radius:6px;cursor:pointer}
+  .btn.secondary{background:#e0e0e0;color:#000}
+  .file-list{list-style:none;margin:0;padding:0}
+  .file-item{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid #ddd;border-radius:6px;background:#fff;margin:8px 0}
+  .handle{cursor:grab;color:#666}
+  .fname{flex:1;word-break:break-all}
+  .meta{font-size:12px;color:#555}
+  .icon-btn{background:#f5f5f5;border:1px solid #ccc;border-radius:6px;padding:6px 10px;cursor:pointer}
+  .drag-over{outline:2px dashed #1976d2}
+  .error{background:#ffebee;color:#b71c1c;padding:10px;border-radius:6px;margin:12px 0}
+  .hint{font-size:12px;color:#666}
+  .footer-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}
+  .count{font-size:13px;color:#333}
+  .hidden{display:none}
+  .toggle{display:flex;gap:8px;align-items:center;margin-top:8px}
+  .total-pages{font-size:13px;color:#333;margin-left:auto}
+  .row-actions{display:flex;gap:6px}
+  .badge{display:inline-block;font-size:12px;background:#eef4ff;color:#174ea6;border:1px solid #cdd9ff;border-radius:999px;padding:2px 8px}
+  @media (max-width:600px){ .total-pages{width:100%;margin-left:0;margin-top:6px} }
+  input[type="file"]{display:none}
+  label.file-picker{background:#1976d2;color:#fff;border:0;padding:9px 14px;border-radius:6px;cursor:pointer;display:inline-block}
+  .spacer{flex:1}
+  .loading-dots::after{content:' .';animation: ellipsis 1.2s infinite}
+  @keyframes ellipsis{0%{content:' .'}33%{content:' ..'}66%{content:' ...'}100%{content:' .'}}
+  .small{font-size:12px}
+  .note{font-size:12px;color:#555;margin-top:8px}
+  .inline{display:inline}
+  .nowrap{white-space:nowrap}
+  .ml8{margin-left:8px}
+  .mr8{margin-right:8px}
+  .mt8{margin-top:8px}
+  .mb8{margin-bottom:8px}
+  .mt12{margin-top:12px}
+  .mb12{margin-bottom:12px}
+  .grid{display:grid;gap:10px}
+  .row{display:flex;gap:10px;align-items:center}
+  .flex{display:flex}
+</style>
+</head><body>
+{% include '_header.html' %}
+{% include '_menu.html' %}
+{% include '_pdf_menu.html' %}
+<div class="wrap">
+  <h1>PDF Merge</h1>
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+  <p>Upload two or more PDF files to merge them into a single PDF. You can reorder, remove, and see page counts before merging.</p>
+  <form id="mergeForm" method="post" enctype="multipart/form-data" class="card" action="{{ url_for('pdf_merge') }}">
+    <div class="controls">
+      <label for="pdfInput" class="file-picker"><span>+ Add PDFs</span></label>
+      <input id="pdfInput" type="file" name="pdfs" accept="application/pdf" multiple>
+      <button type="button" id="clearBtn" class="btn secondary">Clear All</button>
+      <div class="spacer"></div>
+      <label class="toggle"><input type="checkbox" id="sortName" name="sort_name" value="1"> <span>Sort by file name (ignore custom order)</span></label>
+    </div>
+    <div class="hint small">Tip: drag the handle to reorder. Or use Up/Down buttons.</div>
+    <ul id="fileList" class="file-list" aria-live="polite"></ul>
+    <div class="footer-actions">
+      <div class="count"><span id="fileCount">0</span> file(s) selected</div>
+      <div class="total-pages" id="totalPages">Total pages: 0</div>
+      <div class="spacer"></div>
+      <button type="submit" class="btn" id="mergeBtn">Merge PDFs</button>
+    </div>
+    <div class="note">Page counts are computed in your browser using PDF.js. Large files may take a moment.</div>
+  </form>
+</div>
+
+<!-- PDF.js for client-side page counting -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" integrity="sha512-FfhK2s3C8l1Q28q6DvtXcZAn9lW3CEQ+MaY+jjmF0zcLsY0Jt8EQvYO2pwaZkb7yHq9nO4AnG83bbr2l7y5gGQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+  // Configure worker for PDF.js
+  if (window['pdfjsLib']) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+  const pdfInput = document.getElementById('pdfInput');
+  const fileListEl = document.getElementById('fileList');
+  const fileCountEl = document.getElementById('fileCount');
+  const totalPagesEl = document.getElementById('totalPages');
+  const clearBtn = document.getElementById('clearBtn');
+  const mergeForm = document.getElementById('mergeForm');
+  const sortName = document.getElementById('sortName');
+  const mergeBtn = document.getElementById('mergeBtn');
+
+  let items = []; // { id, file, name, pages, loading }
+  let idSeq = 1;
+
+  function bytesToReadable(bytes){
+    if (bytes < 1024) return bytes + ' B';
+    const units = ['KB','MB','GB'];
+    let i = -1; do { bytes = bytes / 1024; i++; } while (bytes >= 1024 && i < units.length-1);
+    return bytes.toFixed(1) + ' ' + units[i];
+  }
+
+  async function countPagesForItem(item){
+    if (!window['pdfjsLib']) return; // fallback: leave undefined
+    try {
+      item.loading = true;
+      renderList();
+      const buf = await item.file.arrayBuffer();
+      const loadingTask = pdfjsLib.getDocument({ data: buf });
+      const pdf = await loadingTask.promise;
+      item.pages = pdf.numPages || 0;
+    } catch (e) {
+      console.warn('Failed to read PDF for page count:', e);
+      item.pages = undefined;
+    } finally {
+      item.loading = false;
+      renderList();
+      updateTotals();
+    }
+  }
+
+  function addFiles(files){
+    const arr = Array.from(files || []);
+    for (const f of arr){
+      if (!f.name.toLowerCase().endsWith('.pdf')) continue;
+      const it = { id: idSeq++, file: f, name: f.name, size: f.size, pages: undefined, loading: false };
+      items.push(it);
+      // kick off async page counting
+      countPagesForItem(it);
+    }
+    renderList();
+    updateTotals();
+  }
+
+  function removeItem(id){
+    items = items.filter(x => x.id !== id);
+    renderList();
+    updateTotals();
+  }
+
+  function moveItem(id, dir){
+    const idx = items.findIndex(x => x.id === id);
+    if (idx < 0) return;
+    const newIdx = idx + dir;
+    if (newIdx < 0 || newIdx >= items.length) return;
+    const [spliced] = items.splice(idx,1);
+    items.splice(newIdx, 0, spliced);
+    renderList();
+  }
+
+  function updateTotals(){
+    fileCountEl.textContent = String(items.length);
+    const total = items.reduce((acc, it) => acc + (typeof it.pages === 'number' ? it.pages : 0), 0);
+    totalPagesEl.textContent = 'Total pages: ' + total;
+  }
+
+  function renderList(){
+    fileListEl.innerHTML = '';
+    items.forEach((it, index) => {
+      const li = document.createElement('li');
+      li.className = 'file-item';
+      li.draggable = true;
+      li.dataset.id = String(it.id);
+      li.addEventListener('dragstart', onDragStart);
+      li.addEventListener('dragover', onDragOver);
+      li.addEventListener('drop', onDrop);
+
+      const handle = document.createElement('span');
+      handle.className = 'handle';
+      handle.textContent = '≡';
+      handle.title = 'Drag to reorder';
+
+      const name = document.createElement('div');
+      name.className = 'fname';
+      name.innerHTML = '<span class="nowrap">' + escapeHtml(it.name) + '</span>' +
+        ' <span class="meta ml8">' + (it.size ? bytesToReadable(it.size) : '') + '</span>';
+
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      if (it.loading){
+        badge.innerHTML = 'pages: <span class="loading-dots"></span>';
+      } else if (typeof it.pages === 'number'){
+        badge.textContent = 'pages: ' + it.pages;
+      } else {
+        badge.textContent = 'pages: —';
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'row-actions';
+      const up = document.createElement('button'); up.type = 'button'; up.className='icon-btn'; up.textContent='↑'; up.title='Move up';
+      up.addEventListener('click', () => moveItem(it.id, -1));
+      const down = document.createElement('button'); down.type = 'button'; down.className='icon-btn'; down.textContent='↓'; down.title='Move down';
+      down.addEventListener('click', () => moveItem(it.id, 1));
+      const del = document.createElement('button'); del.type = 'button'; del.className='icon-btn'; del.textContent='✕'; del.title='Remove';
+      del.addEventListener('click', () => removeItem(it.id));
+      actions.append(up, down, del);
+
+      li.append(handle, name, badge, actions);
+      fileListEl.appendChild(li);
+    });
+  }
+
+  // Drag and drop handlers
+  let dragId = null;
+  function onDragStart(e){
+    dragId = Number(e.currentTarget.dataset.id);
+    e.dataTransfer.effectAllowed = 'move';
+  }
+  function onDragOver(e){
+    e.preventDefault();
+    const el = e.currentTarget;
+    el.classList.add('drag-over');
+  }
+  function onDrop(e){
+    e.preventDefault();
+    const targetId = Number(e.currentTarget.dataset.id);
+    const fromIdx = items.findIndex(x => x.id === dragId);
+    const toIdx = items.findIndex(x => x.id === targetId);
+    if (fromIdx >= 0 && toIdx >= 0 && fromIdx !== toIdx){
+      const [moved] = items.splice(fromIdx,1);
+      items.splice(toIdx,0,moved);
+      renderList();
+    }
+    e.currentTarget.classList.remove('drag-over');
+  }
+  fileListEl.addEventListener('dragleave', (e) => {
+    if (e.target && e.target.classList) e.target.classList.remove('drag-over');
+  });
+
+  // Helpers
+  function escapeHtml(str){
+    return String(str).replace(/[&<>"]/g, (s) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s]));
+  }
+
+  // Events
+  pdfInput.addEventListener('change', () => addFiles(pdfInput.files));
+  clearBtn.addEventListener('click', () => { items = []; pdfInput.value=''; renderList(); updateTotals(); });
+
+  mergeForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (items.length < 2){
+      showInlineError('Please select at least two PDF files');
+      return;
+    }
+    mergeBtn.disabled = true; mergeBtn.textContent = 'Merging…';
+    try{
+      // Build FormData in custom order
+      const fd = new FormData(mergeForm);
+      // Remove existing 'pdfs' entries added by the file input; we'll re-add in our order
+      // Note: FormData doesn't support direct deletion of multiple same-named keys in all browsers; recreate from scratch
+      const fd2 = new FormData();
+      // copy over non-file fields (like sort_name)
+      for (const [k,v] of fd.entries()){
+        if (k !== 'pdfs') fd2.append(k,v);
+      }
+      // If sort by name checked, server will sort; otherwise we append in custom order
+      for (const it of items){
+        fd2.append('pdfs', it.file, it.name);
+      }
+      const resp = await fetch(mergeForm.action, { method: 'POST', body: fd2 });
+      const ctype = resp.headers.get('content-type') || '';
+      if (!resp.ok){
+        const text = await resp.text();
+        showInlineError('Merge failed: ' + (text || resp.status));
+        return;
+      }
+      if (ctype.includes('application/pdf')){
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        let fname = 'merged.pdf';
+        const dispo = resp.headers.get('content-disposition');
+        if (dispo){
+          const m = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(dispo);
+          const enc = m && (m[1] || m[2]);
+          if (enc) fname = decodeURIComponent(enc);
+        }
+        const a = document.createElement('a');
+        a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } else {
+        const html = await resp.text();
+        // Replace card content with server error
+        showInlineError('Merge failed.');
+        console.error('Unexpected response:', html);
+      }
+    } catch(err){
+      showInlineError('Unexpected error: ' + err);
+    } finally {
+      mergeBtn.disabled = false; mergeBtn.textContent = 'Merge PDFs';
+    }
+  });
+
+  function showInlineError(msg){
+    let err = document.querySelector('.card .error.inline');
+    if (!err){
+      err = document.createElement('div');
+      err.className = 'error inline mt8';
+      mergeForm.insertBefore(err, mergeForm.firstChild.nextSibling);
+    }
+    err.textContent = msg;
+  }
+</script>
+</body></html>

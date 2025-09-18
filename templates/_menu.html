@@ -1,0 +1,11 @@
+<nav class="app-menu">
+  <style>
+    .app-menu{display:flex;gap:16px;padding:8px 12px;border-bottom:1px solid #eee;background:#fafafa}
+    .app-menu a{color:#333;text-decoration:none;padding:4px 0}
+    .app-menu a.active{color:#000;font-weight:700;border-bottom:2px solid #000}
+  </style>
+  <a href="{{ url_for('index') }}" class="{{ 'active' if request.endpoint=='index' else '' }}">BG Remover</a>
+  <a href="{{ url_for('pdf_converter') }}" class="{{ 'active' if request.endpoint=='pdf_converter' else '' }}">PDF Converter</a>
+  <a href="{{ url_for('image_upscale') }}" class="{{ 'active' if request.endpoint=='image_upscale' else '' }}">Image Upscale</a>
+  <a href="{{ url_for('image_editor') }}" class="{{ 'active' if request.endpoint=='image_editor' else '' }}">Image Editor</a>
+</nav>

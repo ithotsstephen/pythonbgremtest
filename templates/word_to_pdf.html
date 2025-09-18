@@ -1,0 +1,61 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Word to PDF</title>
+<style>
+  body{font-family:system-ui,Arial,sans-serif;background:#fff;margin:0}
+  .wrap{max-width:980px;margin:20px auto;padding:0 16px}
+  .card{background:#fafafa;padding:14px;border-radius:8px;border:1px solid #ddd}
+  .btn{background:#1976d2;color:#fff;border:0;padding:10px 16px;border-radius:6px;cursor:pointer}
+  .error{background:#ffebee;color:#b71c1c;padding:10px;border-radius:6px;margin:12px 0}
+  label{display:block;margin:8px 0 6px}
+  input[type="file"]{display:block}
+  .hint{font-size:12px;color:#666}
+  .small{font-size:12px;color:#555}
+  .mb8{margin-bottom:8px}
+  .mt8{margin-top:8px}
+  .muted{color:#666}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .inline{display:inline-block;margin-right:10px}
+  .success{background:#e8f5e9;color:#1b5e20;padding:10px;border-radius:6px;margin:12px 0}
+  .note{font-size:12px;color:#555;margin-top:8px}
+  .kbd{border:1px solid #ccc;border-radius:4px;padding:0 4px;font-family:monospace;background:#fff}
+  .nowrap{white-space:nowrap}
+  .ml8{margin-left:8px}
+  .spacer{flex:1}
+  .progress{font-size:12px;color:#333}
+  .hidden{display:none}
+  .file-name{font-size:13px;color:#333}
+  .tip{font-size:12px;color:#555;margin-top:8px}
+</style>
+</head><body>
+{% include '_header.html' %}
+{% include '_menu.html' %}
+{% include '_pdf_menu.html' %}
+<div class="wrap">
+  <h1>Word to PDF</h1>
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+  <form id="docForm" method="post" enctype="multipart/form-data" class="card" action="{{ url_for('word_to_pdf') }}">
+    <label>Select a Word document:</label>
+    <input type="file" id="docInput" name="doc" accept=".doc,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword" required>
+    <div class="file-name" id="fileName"></div>
+    <div class="tip">Accepted: .docx or .doc</div>
+    <button type="submit" class="btn mt8" id="convertBtn">Convert to PDF</button>
+  </form>
+  <div class="note">Conversion runs locally via LibreOffice in headless mode. If not installed, we’ll show a quick install hint.</div>
+</div>
+<script>
+  const docInput = document.getElementById('docInput');
+  const fileName = document.getElementById('fileName');
+  const form = document.getElementById('docForm');
+  const convertBtn = document.getElementById('convertBtn');
+  docInput.addEventListener('change', () => {
+    fileName.textContent = docInput.files && docInput.files[0] ? docInput.files[0].name : '';
+  });
+  form.addEventListener('submit', () => {
+    convertBtn.disabled = true; convertBtn.textContent = 'Converting…';
+    setTimeout(() => { convertBtn.disabled = false; convertBtn.textContent = 'Convert to PDF'; }, 10000);
+  });
+  </script>
+</body></html>

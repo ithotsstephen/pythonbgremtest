@@ -1,0 +1,23 @@
+<div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:#f2f2f2; border-bottom:1px solid #e1e1e1;">
+  <div><strong><a href="{{ url_for('index') }}" style="text-decoration:none; color:inherit;">BG Remover</a></strong></div>
+  <div style="font-size:13px; display:flex; gap:10px; align-items:center;">
+    {% if current_user.is_authenticated %}
+      <span>Hello, {{ current_user.name or current_user.email }}</span>
+      <a href="{{ url_for('logout') }}">Logout</a>
+    {% else %}
+      <a href="{{ url_for('login') }}">Login</a>
+      <span>/</span>
+      <a href="{{ url_for('register') }}">Register</a>
+      {% if google_enabled %}
+        <span>|</span>
+        <a href="{{ url_for('login_google') }}" title="Google Login">Google</a>
+      {% endif %}
+      {% if facebook_enabled %}
+        <a href="{{ url_for('login_facebook') }}" title="Facebook Login">Facebook</a>
+      {% endif %}
+      {% if linkedin_enabled %}
+        <a href="{{ url_for('login_linkedin') }}" title="LinkedIn Login">LinkedIn</a>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>

@@ -1,0 +1,13 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Open Login Page",
+			"type": "shell",
+			"command": "xdg-open http://127.0.0.1:5000/login",
+			"args": [],
+			"isBackground": false,
+			"group": "build"
+		}
+	]
+}

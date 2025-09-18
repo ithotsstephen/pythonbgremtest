@@ -15,6 +15,8 @@
     </style>
 </head>
 <body>
+    {% include '_header.html' %}
+    {% include '_menu.html' %}
     <h1>Background Remover App</h1>
     <form method="POST" enctype="multipart/form-data" id="bgForm">
         <input type="file" name="image" id="imageInput" accept="image/*" required>
@@ -34,12 +36,9 @@
         <div class="col" id="col-processed">
             <h2>Processed</h2>
             {% if preview_img %}
-            <img src="{{ preview_img }}" alt="Processed Image" id="processedImg">
-                <div id="processedWrapper" style="position:relative; display:inline-block;">
-                    <!-- Draggable overlay text element inserted dynamically -->
-                </div>
-            <div id="textDragLayer" style="position:relative;">
-                <!-- dynamic draggable text preview inserted here -->
+            <div id="processedStage" style="position:relative; display:inline-block;">
+                <img src="{{ preview_img }}" alt="Processed Image" id="processedImg">
+                <!-- Draggable/resizable text overlay inserted dynamically -->
             </div>
             <div id="adjustControls" style="margin-top:15px; background:#f5f5f5; padding:12px 14px; border:1px solid #ddd; border-radius:6px;">
                 <div style="display:flex; gap:14px; flex-wrap:wrap;">
@@ -174,12 +173,16 @@
         </div>
     </div>
 <script>
+// Auth flags injected by server
+const IS_AUTH = "{{ '1' if is_authenticated else '0' }}" === '1';
+const LOGIN_URL = "{{ url_for('login', next=url_for('index')) }}";
 const fileInput = document.getElementById('imageInput');
 const instantImg = document.getElementById('instantOriginalImg');
 const originalCol = document.getElementById('col-original');
 const originalPlaceholder = document.getElementById('originalPlaceholder');
 const processedCol = document.getElementById('col-processed');
 const processedImgEl = document.getElementById('processedImg');
+const processedStage = document.getElementById('processedStage');
 const brightnessRange = document.getElementById('brightnessRange');
 const sharpnessRange = document.getElementById('sharpnessRange');
 const adjustStatus = document.getElementById('adjustStatus');
@@ -358,6 +361,7 @@ if (downloadProcessed && processedImgEl){
     downloadProcessed.addEventListener('click', async (e) => {
         if(!resultFileName || !brightnessRange || !sharpnessRange) return; // fallback to normal href
         e.preventDefault();
+        if (!IS_AUTH) { window.location.href = LOGIN_URL; return; }
         // Fetch current adjusted image (ensuring latest slider values are applied)
         const b = brightnessRange.value;
         const s = sharpnessRange.value;
@@ -454,33 +458,38 @@ if(clearBgBtn){
     });
 }
 function ensureDragText(){
+    if(!processedStage){ return; }
     if(!overlayText || !overlayText.value.trim()) { removeDragText(); return; }
     if(!dragTextEl){
         dragTextEl = document.createElement('div');
         dragTextEl.id = 'dragOverlayText';
-        dragTextEl.style.position = 'absolute';
-        dragTextEl.style.left = '50%';
-        dragTextEl.style.top = '90%';
-        dragTextEl.style.transform = 'translate(-50%, -50%)';
-        dragTextEl.style.cursor = 'move';
-        dragTextEl.style.userSelect = 'none';
-        dragTextEl.style.padding = '2px 4px';
-        dragTextEl.style.background = 'rgba(255,255,255,0.2)';
-        dragTextEl.style.border = '1px dashed #555';
-        dragTextEl.style.fontFamily = 'sans-serif';
-        dragTextEl.style.fontWeight = textBold.checked ? '700':'400';
-        dragTextEl.style.fontSize = (textSize.value||48)+ 'px';
-        dragTextEl.style.color = textColor.value;
-        const containerParent = processedImgEl.parentElement;
-        containerParent.style.position='relative';
-        containerParent.appendChild(dragTextEl);
+        Object.assign(dragTextEl.style, {
+            position:'absolute',
+            left:'10px', top:'10px',
+            cursor:'move', userSelect:'none',
+            padding:'4px 6px', background:'rgba(255,255,255,0.25)',
+            border:'1px dashed #555', fontFamily:'sans-serif',
+            whiteSpace:'pre-wrap', lineHeight:'1.25', boxSizing:'border-box',
+            minWidth:'80px', maxWidth:(processedImgEl?.clientWidth||400)+'px',
+            color:textColor.value,
+            fontSize:(textSize.value||48)+'px',
+            fontWeight: textBold.checked ? '700':'400'
+        });
+        processedStage.appendChild(dragTextEl);
+        // resize handle
+        const handle = document.createElement('div');
+        handle.id='textResizeHandle';
+        Object.assign(handle.style, {
+            position:'absolute', width:'14px', height:'14px', bottom:'-7px', right:'-7px',
+            background:'rgba(0,0,0,0.55)', borderRadius:'4px', cursor:'nwse-resize'
+        });
+        dragTextEl.appendChild(handle);
+        handle.addEventListener('mousedown', startResizeWidth);
     }
-    dragTextEl.textContent = overlayText.value; // preserve newlines
+    dragTextEl.textContent = overlayText.value;
     dragTextEl.style.fontWeight = textBold.checked ? '700':'400';
     dragTextEl.style.fontSize = (textSize.value||48)+ 'px';
     dragTextEl.style.color = textColor.value;
-    dragTextEl.style.whiteSpace = 'pre-wrap';
-    dragTextEl.style.maxWidth = processedImgEl ? processedImgEl.clientWidth + 'px' : '100%';
 }
 
 function removeDragText(){
@@ -538,6 +547,37 @@ function endDrag(e){
     const padAdjust = 8; // 2px 4px padding
     overlayBoxWidthPx = Math.max(10, Math.round((rect.width - padAdjust) * scaleX));
     fetchAdjusted();
+    }
+}
+
+// Width resize handling
+let resizingWidth = false; let resizeStartX = 0; let startWidthPx = 0;
+function startResizeWidth(ev){
+    ev.stopPropagation();
+    resizingWidth = true;
+    resizeStartX = ev.clientX;
+    startWidthPx = dragTextEl.offsetWidth;
+    document.addEventListener('mousemove', onResizeMove);
+    document.addEventListener('mouseup', endResizeWidth);
+}
+function onResizeMove(ev){
+    if(!resizingWidth) return;
+    const delta = ev.clientX - resizeStartX;
+    let newW = Math.max(60, startWidthPx + delta);
+    const maxW = processedImgEl.clientWidth - (dragTextEl.offsetLeft||0);
+    newW = Math.min(newW, maxW);
+    dragTextEl.style.width = newW + 'px';
+}
+function endResizeWidth(){
+    if(!resizingWidth) return;
+    resizingWidth = false;
+    document.removeEventListener('mousemove', onResizeMove);
+    document.removeEventListener('mouseup', endResizeWidth);
+    if(dragTextEl && processedImgEl){
+        const imgRect = processedImgEl.getBoundingClientRect();
+        const scaleX = processedImgEl.naturalWidth / imgRect.width;
+        overlayBoxWidthPx = Math.max(10, Math.round(dragTextEl.offsetWidth * scaleX));
+        if(textAbsX !== null && textAbsY !== null){ fetchAdjusted(); }
     }
 }
 
@@ -650,6 +690,7 @@ if(flipReset){
 
 if(downloadSelectedSizesBtn){
     downloadSelectedSizesBtn.addEventListener('click', async () => {
+        if (!IS_AUTH) { window.location.href = LOGIN_URL; return; }
         if(!resultFileName){ multiSizeStatus.textContent='No image'; return; }
         const selected = Array.from(sizeCheckboxes).filter(c=>c.checked).map(c=>c.value);
         if(selected.length===0){ multiSizeStatus.textContent='Select sizes'; return; }

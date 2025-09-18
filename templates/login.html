@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login</title>
+  <style>
+    body{font-family:system-ui, Arial, sans-serif; background:#f7f7f7;}
+    .card{max-width:420px; margin:40px auto; background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.08)}
+    label{display:block; font-size:12px; color:#555}
+    input{width:100%; padding:8px 10px; margin:6px 0 12px;}
+    button{padding:8px 12px;}
+    .alt{margin-top:12px; font-size:13px}
+    .row{display:flex; gap:10px; align-items:center;}
+    .or{margin:10px 0; text-align:center; color:#777; font-size:12px}
+    .msg{color:#c00; font-size:12px}
+  </style>
+</head>
+<body>
+  {% include '_header.html' %}
+  {% include '_menu.html' %}
+  <div class="card">
+    <h2>Sign in</h2>
+    {% with messages = get_flashed_messages(category_filter=['error','info']) %}
+      {% if messages %}<div class="msg">{{ messages[0] }}</div>{% endif %}
+    {% endwith %}
+    <form method="post">
+      <label>Email</label>
+      <input type="email" name="email" required>
+      <label>Password</label>
+      <input type="password" name="password" required>
+      <button type="submit">Login</button>
+    </form>
+    <div class="or">— or —</div>
+    {% if google_enabled %}
+    <div class="row">
+        <a href="{{ url_for('login_google') }}">Continue with Google</a>
+    </div>
+    {% else %}
+    <div class="row" style="color:#777; font-size:12px">Google login not configured</div>
+    {% endif %}
+      {% if facebook_enabled %}
+      <div class="row">
+        <a href="{{ url_for('login_facebook') }}">Continue with Facebook</a>
+      </div>
+      {% endif %}
+      {% if linkedin_enabled %}
+      <div class="row">
+        <a href="{{ url_for('login_linkedin') }}">Continue with LinkedIn</a>
+      </div>
+      {% endif %}
+    <div class="alt">No account? <a href="{{ url_for('register') }}">Register</a></div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,192 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF Editor</title>
+<style>
+  body{font-family:system-ui,Arial,sans-serif;background:#fff;margin:0}
+  .wrap{max-width:980px;margin:20px auto;padding:0 16px}
+  .card{background:#fafafa;padding:14px;border-radius:8px;border:1px solid #ddd}
+  .btn{background:#1976d2;color:#fff;border:0;padding:10px 16px;border-radius:6px;cursor:pointer}
+  .error{background:#ffebee;color:#b71c1c;padding:10px;border-radius:6px;margin:12px 0}
+  label{display:block;margin:8px 0 6px}
+  input[type="file"]{display:block}
+  .small{font-size:12px;color:#555}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .ml8{margin-left:8px}
+  .grid{display:grid;gap:10px}
+  .mt8{margin-top:8px}
+  .list{list-style:none;margin:0;padding:0}
+  .hint{font-size:12px;color:#666}
+  .flex{display:flex}
+  .spacer{flex:1}
+  .badge{font-size:12px;background:#eef4ff;color:#174ea6;border:1px solid #cdd9ff;border-radius:999px;padding:2px 8px}
+  .ghost{opacity:0.6}
+  .file-name{font-size:13px;color:#333}
+  .inline{display:inline-block;margin-right:10px}
+  .nowrap{white-space:nowrap}
+  .file-actions{display:flex;gap:8px}
+  .icon-btn{background:#f5f5f5;border:1px solid #ccc;border-radius:6px;padding:6px 10px;cursor:pointer}
+  .pages{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .page-chip{border:1px solid #ddd;border-radius:999px;padding:4px 8px;background:#fff}
+  .page-chip.removed{opacity:0.5;text-decoration:line-through}
+  .mt12{margin-top:12px}
+  .mb8{margin-bottom:8px}
+  .hidden{display:none}
+  .order-input{width:100%;min-height:42px}
+  .tip{font-size:12px;color:#555;margin-top:8px}
+  .total{font-size:13px;color:#333;margin-top:6px}
+  .note{font-size:12px;color:#555;margin-top:8px}
+  .kbd{border:1px solid #ccc;border-radius:4px;padding:0 4px;font-family:monospace;background:#fff}
+  .danger{background:#d32f2f;color:#fff}
+</style>
+</head><body>
+{% include '_header.html' %}
+{% include '_menu.html' %}
+{% include '_pdf_menu.html' %}
+<div class="wrap">
+  <h1>PDF Editor</h1>
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+  <form id="editForm" method="post" enctype="multipart/form-data" class="card" action="{{ url_for('pdf_editor') }}">
+    <label>Upload a PDF to edit:</label>
+    <input type="file" id="pdfInput" name="pdf" accept="application/pdf" required>
+    <div id="previewTools" class="mt8 hidden">
+      <div class="tip">Drag pages to reorder. Click a page to toggle removal (removed pages dim). Submit to download edited PDF.</div>
+      <div class="row mt8">
+        <button type="button" class="icon-btn" id="restoreAllBtn">Restore All</button>
+        <button type="button" class="icon-btn" id="reverseOrderBtn">Reverse Order</button>
+        <span class="spacer"></span>
+        <span id="pagesInfo" class="small"></span>
+      </div>
+      <div id="thumbContainer" class="pages" style="gap:12px;flex-wrap:wrap"></div>
+    </div>
+    <textarea id="order" name="order" class="order-input hidden" aria-hidden="true"></textarea>
+    <button type="submit" class="btn mt12" id="applyBtn">Apply and Download</button>
+  </form>
+  <div class="note">Preview enabled: reorder by drag & drop, remove by clicking. Text editing module removed.</div>
+
+</div>
+<script>
+  const input = document.getElementById('pdfInput');
+  const order = document.getElementById('order');
+  const form = document.getElementById('editForm');
+  const applyBtn = document.getElementById('applyBtn');
+  const previewTools = document.getElementById('previewTools');
+  const thumbContainer = document.getElementById('thumbContainer');
+  const pagesInfo = document.getElementById('pagesInfo');
+  const restoreAllBtn = document.getElementById('restoreAllBtn');
+  const reverseOrderBtn = document.getElementById('reverseOrderBtn');
+  let pageStates = []; // {index:0-based, removed:false, canvas:..., el:div}
+  let dragSrc = null;
+
+  form.addEventListener('submit', (e) => {
+    // Build order list: 1-based indices of pages not removed in their displayed order
+    const finalOrder = [];
+    pageStates.filter(p => !p.removed).forEach(p => finalOrder.push(p.index + 1));
+    order.value = finalOrder.join(',');
+    if (!order.value) {
+      // nothing selected -> prevent submit
+      e.preventDefault();
+      alert('All pages are removed. Restore at least one page before submitting.');
+      return;
+    }
+    applyBtn.disabled = true; applyBtn.textContent = 'Processing…';
+    setTimeout(() => { applyBtn.disabled = false; applyBtn.textContent = 'Apply and Download'; }, 10000);
+  });
+
+  function updateInfo(){
+    const kept = pageStates.filter(p => !p.removed).length;
+    pagesInfo.textContent = kept + ' / ' + pageStates.length + ' pages kept';
+  }
+
+  function rebuildDOM(){
+    thumbContainer.innerHTML = '';
+    pageStates.forEach(state => {
+      thumbContainer.appendChild(state.el);
+    });
+    updateInfo();
+  }
+
+  function makeDraggable(el, state){
+    el.draggable = true;
+    el.addEventListener('dragstart', ev => { dragSrc = state; ev.dataTransfer.effectAllowed = 'move'; el.classList.add('ghost'); });
+    el.addEventListener('dragend', () => { dragSrc = null; el.classList.remove('ghost'); });
+    el.addEventListener('dragover', ev => { ev.preventDefault(); ev.dataTransfer.dropEffect = 'move'; });
+    el.addEventListener('drop', ev => {
+      ev.preventDefault();
+      if (!dragSrc || dragSrc === state) return;
+      const fromIdx = pageStates.indexOf(dragSrc);
+      const toIdx = pageStates.indexOf(state);
+      if (fromIdx > -1 && toIdx > -1){
+        const [moved] = pageStates.splice(fromIdx,1);
+        pageStates.splice(toIdx,0,moved);
+        rebuildDOM();
+      }
+    });
+  }
+
+  function toggleRemoved(state){
+    state.removed = !state.removed;
+    state.el.classList.toggle('removed', state.removed);
+    updateInfo();
+  }
+
+  restoreAllBtn.addEventListener('click', () => {
+    pageStates.forEach(p => { p.removed = false; p.el.classList.remove('removed'); });
+    updateInfo();
+  });
+  reverseOrderBtn.addEventListener('click', () => {
+    pageStates.reverse();
+    rebuildDOM();
+  });
+
+  async function loadPdf(file){
+    const pdfjsLib = window['pdfjs-dist/build/pdf'];
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js';
+    const arrayBuf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data: arrayBuf}).promise;
+    pageStates = [];
+    for (let i=1;i<=pdf.numPages;i++){
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({scale:0.25});
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = viewport.width; canvas.height = viewport.height;
+      await page.render({canvasContext: ctx, viewport}).promise;
+      const wrapper = document.createElement('div');
+      wrapper.className = 'page-chip';
+      wrapper.style.cursor = 'move';
+      wrapper.style.position = 'relative';
+      wrapper.title = 'Page ' + i + ' (click to remove/restore)';
+      const label = document.createElement('div');
+      label.textContent = i;
+      label.style.position = 'absolute';
+      label.style.top = '2px';
+      label.style.left = '6px';
+      label.style.fontSize = '11px';
+      label.style.background = 'rgba(255,255,255,0.7)';
+      label.style.padding = '1px 4px';
+      label.style.borderRadius = '4px';
+      wrapper.appendChild(canvas);
+      wrapper.appendChild(label);
+      const state = {index:i-1, removed:false, canvas, el:wrapper};
+      makeDraggable(wrapper, state);
+      wrapper.addEventListener('click', (ev) => { if (ev.shiftKey) return; toggleRemoved(state); });
+      pageStates.push(state);
+    }
+    previewTools.classList.remove('hidden');
+    rebuildDOM();
+  }
+
+  input.addEventListener('change', () => {
+    if (input.files && input.files[0]){
+      loadPdf(input.files[0]).catch(err => { console.error(err); alert('Failed to parse PDF preview: '+ err); });
+    }
+  });
+
+  // Lazy load PDF.js from CDN
+  const pdfjsScript = document.createElement('script');
+  pdfjsScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js';
+  document.head.appendChild(pdfjsScript);
+  </script>
+</body></html>

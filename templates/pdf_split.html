@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF Spliter</title>
+<style>body{font-family:system-ui,Arial,sans-serif;background:#fff;margin:0}.wrap{max-width:980px;margin:20px auto;padding:0 16px}</style>
+</head><body>
+{% include '_header.html' %}
+{% include '_menu.html' %}
+{% include '_pdf_menu.html' %}
+<div class="wrap">
+  <h1>PDF Spliter</h1>
+  <form method="post" enctype="multipart/form-data" style="margin-top:12px">
+    <label>Upload PDF
+      <input type="file" name="pdf" accept="application/pdf" required>
+    </label>
+    <div style="margin-top:8px">
+      <label><input type="radio" name="mode" value="each" checked> Split each page into a separate PDF</label>
+    </div>
+    <div style="margin-top:6px">
+      <label><input type="radio" name="mode" value="ranges"> Split by ranges</label>
+      <div style="font-size:12px;color:#555;margin-top:4px">Enter ranges like: 1-3,5,7-9</div>
+      <input type="text" name="ranges" placeholder="e.g. 1-3,5,7-9" style="width:320px; padding:6px">
+    </div>
+    <div style="margin-top:10px">
+      <button type="submit">Split and Download</button>
+    </div>
+  </form>
+  {% if error %}
+  <div style="color:#c00; margin-top:10px">{{ error }}</div>
+  {% endif %}
+</div>
+</body></html>

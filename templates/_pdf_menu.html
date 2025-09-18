@@ -1,0 +1,14 @@
+<nav class="pdf-menu">
+  <style>
+    .pdf-menu{display:flex;gap:14px;padding:8px 12px;border-bottom:1px dashed #e5e5e5;background:#fff}
+    .pdf-menu a{color:#444;text-decoration:none;padding:4px 0}
+    .pdf-menu a.active{color:#000;font-weight:700;border-bottom:2px solid #000}
+  </style>
+  <a href="{{ url_for('pdf_converter') }}" class="{{ 'active' if request.endpoint=='pdf_converter' else '' }}">Overview</a>
+  <a href="{{ url_for('pdf_split') }}" class="{{ 'active' if request.endpoint=='pdf_split' else '' }}">PDF Spliter</a>
+  <a href="{{ url_for('pdf_merge') }}" class="{{ 'active' if request.endpoint=='pdf_merge' else '' }}">PDF Merge</a>
+  <a href="{{ url_for('pdf_rotate') }}" class="{{ 'active' if request.endpoint=='pdf_rotate' else '' }}">PDF Rotate</a>
+  <a href="{{ url_for('word_to_pdf') }}" class="{{ 'active' if request.endpoint=='word_to_pdf' else '' }}">Word to PDF</a>
+  <a href="{{ url_for('pdf_to_word') }}" class="{{ 'active' if request.endpoint=='pdf_to_word' else '' }}">PDF to Word</a>
+  <a href="{{ url_for('pdf_editor') }}" class="{{ 'active' if request.endpoint=='pdf_editor' else '' }}">PDF Editor</a>
+</nav>
