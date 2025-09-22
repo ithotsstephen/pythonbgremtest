@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.env
+.git
+.gitignore
+.cache
+uploads/
+results/
+backgrounds/
+*.log
+.idea/
+.vscode/

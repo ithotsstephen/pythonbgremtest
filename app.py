@@ -33,6 +33,17 @@ app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME', '')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD', '')
 app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER', 'noreply@example.com')
 app.config['MAIL_SUPPRESS_SEND'] = False if app.config['MAIL_SERVER'] and app.config['MAIL_USERNAME'] else True
+# --- Word->PDF production configuration (env overridable) ---
+app.config.setdefault('WORD_TO_PDF_TIMEOUT', int(os.environ.get('WORD_TO_PDF_TIMEOUT', '60')))
+app.config.setdefault('WORD_TO_PDF_MAX_SIZE', int(os.environ.get('WORD_TO_PDF_MAX_SIZE', str(15 * 1024 * 1024))))  # 15MB
+app.config.setdefault('WORD_TO_PDF_ALLOWED_EXTS', {'.docx', '.doc', '.odt', '.rtf'})
+app.config.setdefault('LIBREOFFICE_PATH', os.environ.get('LIBREOFFICE_PATH'))
+app.config.setdefault('WORD_TO_PDF_PARALLEL', int(os.environ.get('WORD_TO_PDF_PARALLEL', '3')))
+import logging, sys
+logging.basicConfig(level=logging.INFO, stream=sys.stdout, format='%(asctime)s %(levelname)s %(message)s')
+logger = logging.getLogger('app')
+import uuid, time
+from threading import Semaphore
 
 db = SQLAlchemy(app)
 
@@ -43,6 +54,69 @@ login_manager.login_message_category = 'info'
 oauth = OAuth(app)
 mail = Mail(app)
 ts = URLSafeTimedSerializer(app.config['SECRET_KEY'])
+_word2pdf_sema = Semaphore(app.config['WORD_TO_PDF_PARALLEL'])
+
+def _detect_libreoffice():
+    import shutil
+    explicit = app.config.get('LIBREOFFICE_PATH')
+    if explicit and os.path.exists(explicit):
+        return explicit
+    return shutil.which('soffice') or shutil.which('libreoffice')
+
+def _convert_word_to_pdf(file_storage, req_id: str):
+    """Returns (pdf_bytes, output_base_name, error_dict).
+    error_dict -> {'code': str, 'message': str}
+    """
+    import tempfile, subprocess, glob, shutil
+    start = time.time()
+    filename = file_storage.filename or ''
+    lower = filename.lower()
+    allowed_exts = app.config['WORD_TO_PDF_ALLOWED_EXTS']
+    ext = os.path.splitext(lower)[1]
+    if ext not in allowed_exts:
+        return None, None, {'code': 'bad_extension', 'message': f'Unsupported file type. Allowed: {", ".join(sorted(allowed_exts))}'}
+    # size check: attempt to read only once
+    file_storage.stream.seek(0, os.SEEK_END)
+    size = file_storage.stream.tell()
+    file_storage.stream.seek(0)
+    if size > app.config['WORD_TO_PDF_MAX_SIZE']:
+        return None, None, {'code': 'too_large', 'message': f'File exceeds limit of {app.config["WORD_TO_PDF_MAX_SIZE"]//1024//1024} MB'}
+    soffice = _detect_libreoffice()
+    if not soffice:
+        return None, None, {'code': 'no_libreoffice', 'message': 'LibreOffice not installed. Install: sudo apt-get update && sudo apt-get install -y libreoffice'}
+    timeout = app.config['WORD_TO_PDF_TIMEOUT']
+    safe_base = secure_filename(filename) or 'document'
+    base_no_ext = os.path.splitext(safe_base)[0]
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            in_name = f'input_{uuid.uuid4().hex}{ext}'
+            in_path = os.path.join(tmpdir, in_name)
+            file_storage.save(in_path)
+            cmd = [soffice, '--headless', '--nologo', '--nodefault', '--nolockcheck', '--norestore', '--invisible', '--convert-to', 'pdf', '--outdir', tmpdir, in_path]
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
+            # Look for produced PDF: prefer same base name pattern; else any pdf.
+            expected = os.path.join(tmpdir, base_no_ext + '.pdf')
+            pdf_path = expected if os.path.exists(expected) else None
+            if not pdf_path:
+                pdfs = glob.glob(os.path.join(tmpdir, '*.pdf'))
+                if pdfs:
+                    pdf_path = pdfs[0]
+            if not pdf_path or not os.path.exists(pdf_path):
+                err_text = (proc.stderr or proc.stdout or '').strip()
+                if len(err_text) > 2000:
+                    err_text = err_text[-2000:]
+                return None, None, {'code': 'conversion_failed', 'message': f'LibreOffice produced no PDF. Details: {err_text or "no output"}'}
+            with open(pdf_path, 'rb') as rf:
+                pdf_bytes = rf.read()
+            elapsed = int((time.time() - start)*1000)
+            logger.info("[WORD2PDF] req=%s success file=%s size=%sB time=%sms", req_id, safe_base, size, elapsed)
+            return pdf_bytes, base_no_ext + '.pdf', None
+    except subprocess.TimeoutExpired:
+        return None, None, {'code': 'timeout', 'message': f'Conversion exceeded {timeout}s timeout'}
+    except Exception as e:
+        # Log unexpected internal error for observability
+        logger.exception("[WORD2PDF] req=%s internal error", req_id)
+        return None, None, {'code': 'unexpected', 'message': f'Unexpected error: {e}'}
 
 # --- OAuth Provider Configuration (safe to leave unconfigured) ---
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID')
@@ -985,6 +1059,29 @@ def image_upscale():
 def image_editor():
     return render_template('image_editor.html')
 
+@app.route('/image-editor/upload', methods=['POST'])
+def image_editor_upload():
+    """Upload an image to use inside the interactive editor. Accepts PNG/JPG/WebP."""
+    file = request.files.get('image')
+    if not file or not file.filename:
+        flash('Please choose an image file', 'error')
+        return redirect(url_for('image_editor'))
+    safe = secure_filename(file.filename)
+    if not safe:
+        flash('Bad filename', 'error')
+        return redirect(url_for('image_editor'))
+    ext = os.path.splitext(safe.lower())[1]
+    if ext not in {'.png', '.jpg', '.jpeg', '.webp'}:
+        flash('Unsupported format (use PNG/JPG/WebP)', 'error')
+        return redirect(url_for('image_editor'))
+    dest = os.path.join(RESULT_FOLDER, safe)
+    try:
+        file.save(dest)
+    except Exception as e:
+        flash(f'Upload failed: {e}', 'error')
+        return redirect(url_for('image_editor'))
+    return redirect(url_for('image_editor', file=safe))
+
 # PDF sub-tools
 @app.route('/pdf-converter/split', methods=['GET','POST'])
 def pdf_split():
@@ -1149,50 +1246,58 @@ def pdf_rotate():
 def word_to_pdf():
     if request.method == 'GET':
         return render_template('word_to_pdf.html')
-    # POST: convert Word to PDF using LibreOffice headless
+    req_id = uuid.uuid4().hex[:12]
     f = request.files.get('doc')
     if not f or not f.filename:
-        return render_template('word_to_pdf.html', error='Please choose a .docx or .doc file')
-    lower = f.filename.lower()
-    if not (lower.endswith('.docx') or lower.endswith('.doc')):
-        return render_template('word_to_pdf.html', error='Unsupported file type. Please upload .docx or .doc')
-    import shutil, subprocess, tempfile, glob
-    # discover libreoffice/soffice
-    soffice = shutil.which('soffice') or shutil.which('libreoffice')
-    if not soffice:
-        return render_template('word_to_pdf.html', error='LibreOffice is not installed on the server. On Ubuntu/Debian, run: sudo apt-get update && sudo apt-get install -y libreoffice')
-    base_safe = secure_filename(f.filename)
-    if not base_safe:
-        base_safe = 'document.docx'
-    base_no_ext = os.path.splitext(base_safe)[0]
+        return _word2pdf_error('no_file', 'Please choose a document file', req_id)
+    # Acquire semaphore for concurrency control
+    acquired = _word2pdf_sema.acquire(timeout=app.config['WORD_TO_PDF_TIMEOUT'])
+    if not acquired:
+        return _word2pdf_error('busy', 'Conversion service is busy, try again shortly', req_id)
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            in_path = os.path.join(tmpdir, base_safe)
-            f.save(in_path)
-            # Run LibreOffice headless conversion
-            cmd = [soffice, '--headless', '--convert-to', 'pdf', '--outdir', tmpdir, in_path]
-            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=120)
-            # LibreOffice may still succeed with non-zero in some cases; check for output file existence
-            out_path = os.path.join(tmpdir, base_no_ext + '.pdf')
-            if not os.path.exists(out_path):
-                # Fallback: any PDF in tmpdir
-                pdfs = glob.glob(os.path.join(tmpdir, '*.pdf'))
-                if pdfs:
-                    out_path = pdfs[0]
-            if not os.path.exists(out_path):
-                err = (proc.stderr or proc.stdout or '').strip()
-                if len(err) > 500:
-                    err = err[-500:]
-                return render_template('word_to_pdf.html', error=f'Conversion failed. Details: {err or "no output produced"}')
-            with open(out_path, 'rb') as rf:
-                data = rf.read()
-            bio = io.BytesIO(data)
-            bio.seek(0)
-            return send_file(bio, mimetype='application/pdf', download_name=f'{base_no_ext}.pdf', as_attachment=True)
-    except subprocess.TimeoutExpired:
-        return render_template('word_to_pdf.html', error='Conversion timed out. Try a smaller file or simpler document.')
+        pdf_bytes, out_name, err = _convert_word_to_pdf(f, req_id)
+    finally:
+        _word2pdf_sema.release()
+    if err:
+        return _word2pdf_error(err['code'], err['message'], req_id)
+    bio = io.BytesIO(pdf_bytes)
+    bio.seek(0)
+    resp = send_file(bio, mimetype='application/pdf', download_name=out_name, as_attachment=True)
+    resp.headers['X-Request-ID'] = req_id
+    return resp
+
+def _word2pdf_error(code: str, message: str, req_id: str):
+    wants_json = 'application/json' in request.headers.get('Accept','') or request.args.get('json') == '1'
+    status_map = {
+        'no_file': 400,
+        'bad_extension': 400,
+        'too_large': 413,
+        'no_libreoffice': 500,
+        'conversion_failed': 422,
+        'timeout': 504,
+        'busy': 503,
+        'unexpected': 500,
+    }
+    status = status_map.get(code, 500)
+    logger.warning("[WORD2PDF] req=%s error code=%s msg=%s", req_id, code, message)
+    if wants_json:
+        return jsonify({'status':'error','code':code,'message':message,'request_id':req_id}), status
+    return render_template('word_to_pdf.html', error=message, request_id=req_id), status
+
+@app.route('/health')
+def health():
+    """Health check endpoint returning LibreOffice availability and config snapshot."""
+    try:
+        soffice = _detect_libreoffice()
+        return jsonify({
+            'status': 'ok',
+            'libreoffice': bool(soffice),
+            'parallel_limit': app.config.get('WORD_TO_PDF_PARALLEL'),
+            'timeout': app.config.get('WORD_TO_PDF_TIMEOUT')
+        })
     except Exception as e:
-        return render_template('word_to_pdf.html', error=f'Unexpected error: {e}')
+        logger.exception("Health check failure")
+        return jsonify({'status':'error','message': str(e)}), 500
 
 @app.route('/pdf-converter/pdf-to-word')
 def pdf_to_word():
